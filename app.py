@@ -11,7 +11,7 @@ import time as _time
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from flask import (Flask, abort, flash, redirect, render_template, request,
+from flask import (Flask, abort, flash, jsonify, redirect, render_template, request,
                    send_file, session, url_for)
 from flask_sqlalchemy import SQLAlchemy
 from jinja2 import ChoiceLoader, FileSystemLoader
@@ -101,6 +101,7 @@ class Caderno(db.Model):
     pdf_questoes = deferred(db.Column(db.LargeBinary))
     pdf_gabarito = deferred(db.Column(db.LargeBinary))
     tem_pdf_gabarito = db.Column(db.Boolean, default=False)
+    assunto = db.Column(db.String(200))  # assunto das questões (ex.: Crase)
     gabarito_json = db.Column(db.Text, default="{}")
     criado_em = db.Column(db.DateTime, default=agora)
     tentativas = db.relationship("Tentativa", backref="caderno", order_by="Tentativa.feita_em",
@@ -225,6 +226,18 @@ def seed():
     db.session.commit()
 
 
+NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)")]
+
+
+def migrar(conn):
+    """Adiciona colunas criadas depois do primeiro deploy (create_all não altera tabelas)."""
+    from sqlalchemy import inspect
+    insp = inspect(conn)
+    for tabela, coluna, tipo in NOVAS_COLUNAS:
+        if coluna not in {c["name"] for c in insp.get_columns(tabela)}:
+            conn.exec_driver_sql(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
+
+
 def init_db():
     """Cria tabelas e matérias. Seguro com vários workers subindo ao mesmo tempo."""
     with app.app_context():
@@ -234,8 +247,11 @@ def init_db():
                     with db.engine.begin() as conn:
                         conn.exec_driver_sql("SELECT pg_advisory_xact_lock(424242)")
                         db.metadata.create_all(bind=conn, checkfirst=True)
+                        migrar(conn)
                 else:
                     db.create_all()
+                    with db.engine.begin() as conn:
+                        migrar(conn)
                 seed()
                 return
             except Exception as e:  # outro worker criou primeiro: espera e tenta de novo
@@ -711,6 +727,7 @@ def caderno_novo(mid):
 
     titulo = request.form.get("titulo", "").strip() or os.path.splitext(nome)[0]
     c = Caderno(materia_id=m.id, titulo=titulo[:200], arquivo_nome=nome[:200], pdf_questoes=dq,
+                assunto=(request.form.get("assunto", "").strip()[:200] or None),
                 pdf_gabarito=dg, tem_pdf_gabarito=bool(dg))
     c.gabarito = gab
     db.session.add(c)
@@ -740,6 +757,7 @@ def caderno_gabarito(cid):
         t = request.form.get("titulo", "").strip()
         if t:
             c.titulo = t[:200]
+        c.assunto = request.form.get("assunto", "").strip()[:200] or None
         if not gab:
             flash("Não entendi o gabarito. Use uma linha por questão, ex.: 1-A", "erro")
         else:
@@ -812,6 +830,47 @@ def caderno_excluir(cid):
 
 
 # ---- Histórico e metas ---------------------------------------------------- #
+@app.post("/api/aula/<int:aid>/leitura")
+def api_aula_leitura(aid):
+    """Círculo da tela Evolução: acao=ler registra leitura; acao=desfazer remove a última."""
+    a = db.get_or_404(Aula, aid)
+    acao = (request.get_json(silent=True) or {}).get("acao", "ler")
+    if acao == "desfazer":
+        if a.leituras:
+            db.session.delete(a.leituras[-1])
+    else:
+        db.session.add(Leitura(aula_id=a.id, numero=len(a.leituras) + 1, lida_em=agora()))
+    db.session.commit()
+    db.session.refresh(a)
+    s = stats_materia(a.materia)
+    return jsonify(ok=True, leituras=len(a.leituras),
+                   ultima=a.leituras[-1].lida_em.strftime("%d/%m/%Y %H:%M") if a.leituras else None,
+                   aulas_lidas=s["aulas_lidas"], aulas=s["aulas"])
+
+
+@app.post("/api/caderno/<int:cid>/assunto")
+def api_caderno_assunto(cid):
+    c = db.get_or_404(Caderno, cid)
+    c.assunto = ((request.get_json(silent=True) or {}).get("assunto") or "").strip()[:200] or None
+    db.session.commit()
+    return jsonify(ok=True, assunto=c.assunto)
+
+
+def por_assunto(m):
+    """Desempenho nas questões agrupado pelo assunto de cada caderno."""
+    grupos = {}
+    for c in m.cadernos:
+        g = grupos.setdefault(c.assunto or "Sem assunto definido", {"resp": 0, "ac": 0, "tent": 0})
+        for t in c.tentativas:
+            g["resp"] += t.respondidas
+            g["ac"] += t.acertos
+            g["tent"] += 1
+    linhas = [{"assunto": k, "questoes": v["resp"], "tentativas": v["tent"],
+               "acerto": round(100 * v["ac"] / v["resp"], 1) if v["resp"] else None}
+              for k, v in grupos.items()]
+    return sorted(linhas, key=lambda x: (x["assunto"] == "Sem assunto definido", x["assunto"]))
+
+
 @app.route("/historico")
 def historico():
     materias = Materia.query.order_by(Materia.ordem).all()
@@ -833,7 +892,7 @@ def historico():
     eventos = ([("leitura", l.lida_em, l) for l in Leitura.query.order_by(Leitura.lida_em.desc()).limit(15)]
                + [("questoes", t.feita_em, t) for t in reversed(tents[-15:])])
     eventos.sort(key=lambda e: e[1], reverse=True)
-    return render_template("historico.html", materias=[(m, stats_materia(m)) for m in materias],
+    return render_template("historico.html", materias=[(m, stats_materia(m), por_assunto(m)) for m in materias],
                            pontos=pontos, semanas=semanas, eventos=eventos[:20])
 
 

@@ -1,5 +1,35 @@
 {% extends "base.html" %}
 {% block titulo %}Evolução{% endblock %}
+{% block css %}
+.pm-cab,.pm summary{display:grid;grid-template-columns:minmax(150px,1.3fr) 2fr 70px 70px 60px;gap:10px;align-items:center}
+.pm-cab{font-size:.75rem;font-weight:800;text-transform:uppercase;color:var(--mut);padding:0 10px 6px;border-bottom:2px solid var(--line)}
+.pm{border-bottom:1px solid var(--line)}
+.pm summary{list-style:none;cursor:pointer;padding:12px 10px;border-radius:12px}
+.pm summary::-webkit-details-marker{display:none}
+.pm summary:hover{background:var(--soft)}
+.pm-nome{display:flex;gap:8px;align-items:center}
+.seta{flex:none;width:8px;height:8px;border-right:3px solid var(--mut);border-bottom:3px solid var(--mut);transform:rotate(-45deg);transition:transform .15s}
+.pm[open] .seta{transform:rotate(45deg)}
+.pm-aulas{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.bola{width:26px;height:26px;border-radius:50%;border:3px solid var(--c);background:transparent;cursor:pointer;padding:0;
+  font:900 .7rem Nunito,sans-serif;color:#fff;display:grid;place-items:center;transition:transform .1s,background .15s}
+.bola:hover{transform:scale(1.12)}
+.bola.cheia{background:var(--c)}
+.bola:focus-visible{outline:3px solid var(--xp);outline-offset:2px}
+.bola.pulso{animation:pulso .35s}
+@keyframes pulso{50%{transform:scale(1.35)}}
+.pm-corpo{padding:4px 10px 16px 26px}
+.pm-corpo h3{font-size:.95rem;font-weight:900;margin:12px 0 8px}
+.cad{display:grid;grid-template-columns:1fr minmax(160px,260px);gap:10px;align-items:center;padding:6px 0}
+.assunto.salvo{border-color:var(--ok)}
+@media (max-width:700px){
+  .pm-cab{display:none}
+  .pm summary{grid-template-columns:1fr auto auto;grid-template-areas:"n q a" "b b b"}
+  .pm summary>:nth-child(1){grid-area:n}.pm summary>:nth-child(2){grid-area:b}
+  .pm summary>:nth-child(3){grid-area:q}.pm summary>:nth-child(4){grid-area:a}.pm summary>:nth-child(5){display:none}
+  .pm-corpo{padding-left:10px}.cad{grid-template-columns:1fr}
+}
+{% endblock %}
 {% block conteudo %}
 <h1>Sua evolução</h1>
 <p class="sub">Acerto por bateria de questões, ritmo semanal e desempenho por matéria.</p>
@@ -8,7 +38,7 @@
   <div class="row"><h2 style="margin:0">Acerto por bateria</h2>
     <select id="filtro" class="right" style="width:auto">
       <option value="">Todas as matérias</option>
-      {% for m, s in materias %}{% if s.tentativas %}<option>{{ m.nome }}</option>{% endif %}{% endfor %}
+      {% for m, s, pa in materias %}{% if s.tentativas %}<option>{{ m.nome }}</option>{% endif %}{% endfor %}
     </select></div>
   {% if pontos %}
   <div style="position:relative;height:280px;margin-top:10px"><canvas id="gAcerto"></canvas></div>
@@ -20,19 +50,54 @@
   <div style="position:relative;height:240px"><canvas id="gSemana"></canvas></div>
 </section>
 
-<section class="card" style="overflow-x:auto">
+<section class="card">
   <h2>Por matéria</h2>
-  <table>
-    <tr><th>Matéria</th><th>Aulas lidas</th><th>Leituras</th><th>Questões</th><th>Acerto</th><th>Último</th></tr>
-    {% for m, s in materias %}
-    <tr>
-      <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{{ m.cor }};margin-right:6px"></span><a href="{{ url_for('materia', mid=m.id) }}">{{ m.nome }}</a></td>
-      <td>{{ s.aulas_lidas }}/{{ s.aulas }}</td><td>{{ s.leituras }}</td><td>{{ s.questoes }}</td>
-      <td>{% if s.acerto is not none %}<span class="tag {{ 'ok' if s.acerto >= meta_acerto else 'err' }}">{{ s.acerto|pct }}</span>{% else %}—{% endif %}</td>
-      <td>{{ s.ultimo|pct }}</td>
-    </tr>
-    {% endfor %}
-  </table>
+  <p class="hint" style="margin-top:-6px">Clique num círculo para marcar a aula como lida. Toque na matéria para ver e definir o assunto das questões.</p>
+  <div class="pm-cab"><span>Matéria</span><span>Aulas lidas</span><span>Questões</span><span>Acerto</span><span>Último</span></div>
+  {% for m, s, pa in materias %}
+  <details class="pm" style="--c:{{ m.cor }}">
+    <summary>
+      <span class="pm-nome"><i class="seta"></i><b>{{ m.nome }}</b></span>
+      <span class="pm-aulas">
+        {% for a in m.aulas %}{% set n = a.leituras|length %}
+        <button type="button" class="bola {{ 'cheia' if n }}" data-aula="{{ a.id }}" data-titulo="{{ a.titulo }}" data-n="{{ n }}"
+          title="{{ a.titulo }} — {{ (n ~ 'x lida, última ' ~ (a.leituras[-1].lida_em|dt)) if n else 'não lida' }}"
+          aria-label="{{ a.titulo }}: {{ 'lida ' ~ n ~ ' vez(es)' if n else 'não lida' }}" aria-pressed="{{ 'true' if n else 'false' }}">{{ n if n > 1 else '' }}</button>
+        {% else %}<a class="mut" href="{{ url_for('materia', mid=m.id) }}#aulas" style="font-size:.82rem">enviar aulas</a>{% endfor %}
+        {% if m.aulas %}<small class="mut cont" data-m="{{ m.id }}">{{ s.aulas_lidas }}/{{ s.aulas }}</small>{% endif %}
+      </span>
+      <span>{{ s.questoes }}</span>
+      <span>{% if s.acerto is not none %}<span class="tag {{ 'ok' if s.acerto >= meta_acerto else 'err' }}">{{ s.acerto|pct }}</span>{% else %}—{% endif %}</span>
+      <span>{{ s.ultimo|pct }}</span>
+    </summary>
+    <div class="pm-corpo">
+      <datalist id="tops{{ m.id }}">{% for t in m.topicos %}<option value="{{ t.nome }}">{% endfor %}</datalist>
+      <h3>Assunto das questões</h3>
+      {% for c in m.cadernos %}
+      <div class="cad">
+        <div style="min-width:0">
+          <a href="{{ url_for('caderno_resolver', cid=c.id) }}"><b>{{ c.titulo }}</b></a>
+          <div class="mut" style="font-size:.8rem">{{ c.total }} questões{% if c.tentativas %} · último {{ c.tentativas[-1].percentual|pct }}{% else %} · não resolvido{% endif %}</div>
+        </div>
+        <input type="text" class="assunto" list="tops{{ m.id }}" data-caderno="{{ c.id }}" value="{{ c.assunto or '' }}"
+               placeholder="Assunto (ex.: Crase)" aria-label="Assunto do caderno {{ c.titulo }}">
+      </div>
+      {% else %}
+      <p class="mut">Nenhum caderno de questões nesta matéria. <a href="{{ url_for('materia', mid=m.id) }}#questoes">Enviar questões</a></p>
+      {% endfor %}
+      {% if m.cadernos %}
+      <h3>Desempenho por assunto</h3>
+      <table>
+        <tr><th>Assunto</th><th>Questões</th><th>Acerto</th></tr>
+        {% for l in pa %}
+        <tr><td>{{ l.assunto }}</td><td>{{ l.questoes }}</td>
+          <td>{% if l.acerto is not none %}<span class="tag {{ 'ok' if l.acerto >= meta_acerto else 'err' }}">{{ l.acerto|pct }}</span>{% else %}—{% endif %}</td></tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+    </div>
+  </details>
+  {% endfor %}
 </section>
 
 <section class="card">
@@ -83,5 +148,39 @@ new Chart(document.getElementById('gSemana'), {data:{labels: SEMANAS.map(s => s.
 ]}, options:{responsive:true, maintainAspectRatio:false,
   scales:{y:{beginAtZero:true, title:{display:true, text:'leituras'}, grid:{color:cor('--line')}},
           y1:{beginAtZero:true, position:'right', title:{display:true, text:'questões'}, grid:{display:false}}, x:{grid:{display:false}}}}});
+
+// círculos de aulas lidas
+document.querySelectorAll('.bola').forEach(b => b.addEventListener('click', async e => {
+  e.preventDefault(); e.stopPropagation();
+  const n = +b.dataset.n;
+  let acao = 'ler';
+  if (n > 0) {
+    const ler = confirm(`"${b.dataset.titulo}" já foi lida ${n}x.\n\nOK = registrar mais uma leitura\nCancelar = outras opções`);
+    if (!ler) { if (!confirm('Remover a última leitura registrada desta aula?')) return; acao = 'desfazer'; }
+  }
+  b.disabled = true;
+  try {
+    const r = await fetch('/api/aula/' + b.dataset.aula + '/leitura', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acao})});
+    const d = await r.json(); if (!d.ok) throw 0;
+    b.dataset.n = d.leituras; b.classList.toggle('cheia', d.leituras > 0); b.textContent = d.leituras > 1 ? d.leituras : '';
+    b.setAttribute('aria-pressed', d.leituras > 0);
+    b.title = b.dataset.titulo + ' — ' + (d.leituras ? d.leituras + 'x lida, última ' + d.ultima : 'não lida');
+    const cont = b.parentElement.querySelector('.cont'); if (cont) cont.textContent = d.aulas_lidas + '/' + d.aulas;
+    b.classList.remove('pulso'); void b.offsetWidth; b.classList.add('pulso');
+  } catch (_) { alert('Não foi possível salvar. Tente de novo.'); }
+  b.disabled = false;
+}));
+// assunto dos cadernos (salva ao sair do campo)
+document.querySelectorAll('.assunto').forEach(i => {
+  i.dataset.orig = i.value;
+  i.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); i.blur(); } });
+  i.addEventListener('change', async () => {
+    try {
+      const r = await fetch('/api/caderno/' + i.dataset.caderno + '/assunto', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({assunto: i.value})});
+      if (!(await r.json()).ok) throw 0;
+      i.classList.add('salvo'); setTimeout(() => i.classList.remove('salvo'), 1200);
+    } catch (_) { alert('Não foi possível salvar o assunto.'); i.value = i.dataset.orig; }
+  });
+});
 </script>
 {% endblock %}

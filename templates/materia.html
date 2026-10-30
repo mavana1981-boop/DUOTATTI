@@ -84,6 +84,9 @@
       <textarea name="gabarito_texto" rows="3" placeholder="1-A 2-C 3-E …  ou  ACEBD…"></textarea>
       <label class="f">Título (opcional)</label>
       <input type="text" name="titulo" placeholder="Ex.: VUNESP 2023 — Crase">
+      <label class="f">Assunto das questões (opcional)</label>
+      <input type="text" name="assunto" list="topsm" placeholder="Ex.: Crase">
+      <datalist id="topsm">{% for t in m.topicos %}<option value="{{ t.nome }}">{% endfor %}</datalist>
       <div style="margin-top:14px"><button class="btn azul">Criar caderno</button></div>
     </form>
   </details>
@@ -93,7 +96,7 @@
     <div class="num {{ 'lida' if ts }}">{{ c.total }}</div>
     <div style="flex:1;min-width:0">
       <div class="nome">{{ c.titulo }}</div>
-      <div class="det">{{ c.total }} questões ·
+      <div class="det">{% if c.assunto %}<b>{{ c.assunto }}</b> · {% endif %}{{ c.total }} questões ·
         {% if ts %}{{ ts|length }} tentativa{{ '' if ts|length == 1 else 's' }} · última
           <b style="color:{{ 'var(--ok)' if ts[-1].percentual >= meta_acerto else 'var(--err)' }}">{{ ts[-1].percentual|pct }}</b>
           · melhor {{ (ts|map(attribute='percentual')|max)|pct }}
