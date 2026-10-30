@@ -1,0 +1,850 @@
+"""
+DUOTATTI — plataforma de estudos para o concurso de Escrevente Técnico Judiciário do TJSP.
+Flask + SQLAlchemy (Postgres no Railway / SQLite local).
+"""
+import io
+import json
+import os
+import random
+import re
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+from flask import (Flask, abort, flash, redirect, render_template, request,
+                   send_file, session, url_for)
+from flask_sqlalchemy import SQLAlchemy
+from pypdf import PdfReader
+from sqlalchemy.orm import deferred
+from werkzeug.utils import secure_filename
+
+TZ = ZoneInfo("America/Sao_Paulo")
+LETRAS = "ABCDE"
+
+
+def agora():
+    return datetime.now(TZ).replace(tzinfo=None, microsecond=0)
+
+
+def hoje():
+    return agora().date()
+
+
+# --------------------------------------------------------------------------- #
+# App / banco
+# --------------------------------------------------------------------------- #
+app = Flask(__name__)
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "duotatti-dev-key")
+db_url = os.environ.get("DATABASE_URL", "sqlite:///duotatti.db")
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
+app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_MB", "80")) * 1024 * 1024
+db = SQLAlchemy(app)
+
+
+class Materia(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(120), unique=True, nullable=False)
+    info = db.Column(db.String(200))
+    questoes_prova = db.Column(db.Integer)
+    cor = db.Column(db.String(9), default="#3fbf74")
+    ordem = db.Column(db.Integer, default=0)
+    topicos = db.relationship("Topico", backref="materia", order_by="Topico.ordem",
+                              cascade="all, delete-orphan", lazy="selectin")
+    aulas = db.relationship("Aula", backref="materia", order_by="Aula.criada_em",
+                            cascade="all, delete-orphan", lazy="selectin")
+    cadernos = db.relationship("Caderno", backref="materia", order_by="Caderno.criado_em",
+                               cascade="all, delete-orphan", lazy="selectin")
+
+
+class Topico(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    materia_id = db.Column(db.Integer, db.ForeignKey("materia.id"), nullable=False)
+    nome = db.Column(db.String(200), nullable=False)
+    ordem = db.Column(db.Integer, default=0)
+
+
+class Aula(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    materia_id = db.Column(db.Integer, db.ForeignKey("materia.id"), nullable=False)
+    topico_id = db.Column(db.Integer, db.ForeignKey("topico.id"))
+    titulo = db.Column(db.String(200), nullable=False)
+    arquivo_nome = db.Column(db.String(200))
+    pdf = deferred(db.Column(db.LargeBinary))
+    paginas = db.Column(db.Integer)
+    tamanho = db.Column(db.Integer)
+    criada_em = db.Column(db.DateTime, default=agora)
+    topico = db.relationship("Topico")
+    leituras = db.relationship("Leitura", backref="aula", order_by="Leitura.lida_em",
+                               cascade="all, delete-orphan", lazy="selectin")
+
+
+class Leitura(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    aula_id = db.Column(db.Integer, db.ForeignKey("aula.id"), nullable=False)
+    numero = db.Column(db.Integer, nullable=False)  # 1ª, 2ª, 3ª leitura...
+    lida_em = db.Column(db.DateTime, default=agora, nullable=False)
+
+
+class Caderno(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    materia_id = db.Column(db.Integer, db.ForeignKey("materia.id"), nullable=False)
+    titulo = db.Column(db.String(200), nullable=False)
+    arquivo_nome = db.Column(db.String(200))
+    pdf_questoes = deferred(db.Column(db.LargeBinary))
+    pdf_gabarito = deferred(db.Column(db.LargeBinary))
+    tem_pdf_gabarito = db.Column(db.Boolean, default=False)
+    gabarito_json = db.Column(db.Text, default="{}")
+    criado_em = db.Column(db.DateTime, default=agora)
+    tentativas = db.relationship("Tentativa", backref="caderno", order_by="Tentativa.feita_em",
+                                 cascade="all, delete-orphan", lazy="selectin")
+
+    @property
+    def gabarito(self):
+        try:
+            return {int(k): v for k, v in sorted(json.loads(self.gabarito_json or "{}").items(),
+                                                  key=lambda kv: int(kv[0]))}
+        except Exception:
+            return {}
+
+    @gabarito.setter
+    def gabarito(self, g):
+        self.gabarito_json = json.dumps({str(k): v for k, v in sorted(g.items())})
+
+    @property
+    def total(self):
+        return len(self.gabarito)
+
+
+class Tentativa(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    caderno_id = db.Column(db.Integer, db.ForeignKey("caderno.id"), nullable=False)
+    materia_id = db.Column(db.Integer, db.ForeignKey("materia.id"), nullable=False)
+    feita_em = db.Column(db.DateTime, default=agora, nullable=False)
+    acertos = db.Column(db.Integer, default=0)
+    respondidas = db.Column(db.Integer, default=0)
+    total = db.Column(db.Integer, default=0)
+    xp = db.Column(db.Integer, default=0)
+    respostas_json = db.Column(db.Text, default="{}")
+    materia = db.relationship("Materia")
+
+    @property
+    def percentual(self):
+        return round(100 * self.acertos / self.respondidas, 1) if self.respondidas else 0.0
+
+    @property
+    def respostas(self):
+        return {int(k): v for k, v in json.loads(self.respostas_json or "{}").items()}
+
+
+class Config(db.Model):
+    chave = db.Column(db.String(50), primary_key=True)
+    valor = db.Column(db.String(200))
+
+
+DEFAULTS = {
+    "nome": "Estudante",
+    "data_prova": "2027-03-14",
+    "meta_acerto": "80",
+    "meta_leituras_semana": "5",
+    "meta_questoes_semana": "60",
+}
+
+
+def configs():
+    cfg = dict(DEFAULTS)
+    for c in Config.query.all():
+        cfg[c.chave] = c.valor
+    return cfg
+
+
+def cfg_num(cfg, chave):
+    try:
+        return float(cfg[chave])
+    except (KeyError, ValueError, TypeError):
+        return float(DEFAULTS[chave])
+
+
+# --------------------------------------------------------------------------- #
+# Matérias do edital (TJSP Escrevente — Edital 02/2026)
+# --------------------------------------------------------------------------- #
+MATERIAS = [
+    ("Língua Portuguesa", 16, "Eliminatória · mínimo 8 acertos", "#3d8bfd", [
+        "Interpretação, informações literais e inferências",
+        "Ponto de vista do autor e estruturação do texto (coesão)",
+        "Significação contextual, sinônimos, antônimos e sentido figurado",
+        "Classes de palavras", "Concordância verbal e nominal", "Regência verbal e nominal",
+        "Colocação pronominal", "Crase", "Pontuação"]),
+    ("Direito Penal", None, "CP · bloco de Direito (30 questões)", "#e5484d", [
+        "Arts. 293 a 311-A", "Arts. 312 a 317", "Arts. 319 a 333",
+        "Arts. 336, 337 e 339 a 347", "Arts. 357 e 359"]),
+    ("Direito Processual Penal", None, "CPP e Lei 9.099", "#d6409f", [
+        "CPP arts. 251 a 274", "CPP arts. 351 a 372", "CPP arts. 394 a 497",
+        "CPP arts. 531 a 548", "CPP arts. 574 a 667", "Lei 9.099/95 arts. 60 a 83, 88 e 89"]),
+    ("Direito Processual Civil", None, "CPC e Juizados", "#8e4ec6", [
+        "CPC arts. 144 a 155", "CPC arts. 188 a 275", "CPC arts. 294 a 311",
+        "CPC arts. 318 a 404", "CPC arts. 405 a 538", "CPC arts. 994 a 1026",
+        "Lei 9.099/95 arts. 3 a 19", "Lei 12.153/2009"]),
+    ("Direito Constitucional", None, "CF", "#e8a317", [
+        "CF Título II, Capítulos I a III (direitos e garantias)",
+        "CF Título III, Capítulo VII, Seções I e II (administração pública)", "CF art. 92"]),
+    ("Direito Administrativo", None, "Estatuto e improbidade", "#12a594", [
+        "Lei 10.261/68 arts. 1 a 86", "Lei 10.261/68 arts. 171 a 175 e 239 a 323",
+        "Lei 8.429/92 (improbidade)"]),
+    ("Legislação interna do TJSP", None, "Resoluções e normas", "#0b8fd6", [
+        "Resolução TJSP 850/2021 (teletrabalho)", "Resolução TJSP 963/2025 (eproc)",
+        "LC 1.111/2010 (plano de cargos)", "Regimento Interno do TJSP",
+        "Normas da Corregedoria, Tomo I"]),
+    ("Conhecimentos Gerais", 24, "Classificatória", "#46a758", [
+        "Atualidades (fatos a partir de 2026)",
+        "Estatuto da Pessoa com Deficiência (arts. 1–13 e 34–38)",
+        "Matemática: proporção, porcentagem, regra de três, média",
+        "Matemática: juros simples, equações, sistemas",
+        "Matemática: geometria, medidas, tabelas e gráficos",
+        "Informática: Windows e Microsoft 365 (Word, Excel)",
+        "Informática: Teams, OneDrive, e-mail e internet",
+        "Raciocínio lógico: estruturas e argumentação",
+        "Raciocínio lógico: sequências e diagramas"]),
+]
+
+
+def seed():
+    if Materia.query.count():
+        return
+    for i, (nome, q, info, cor, tops) in enumerate(MATERIAS):
+        m = Materia(nome=nome, questoes_prova=q, info=info, cor=cor, ordem=i)
+        m.topicos = [Topico(nome=t, ordem=j) for j, t in enumerate(tops)]
+        db.session.add(m)
+    db.session.commit()
+
+
+with app.app_context():
+    db.create_all()
+    seed()
+
+
+# --------------------------------------------------------------------------- #
+# PDF e leitura de gabarito
+# --------------------------------------------------------------------------- #
+def eh_pdf(data):
+    return bool(data) and data[:1024].lstrip().startswith(b"%PDF")
+
+
+def contar_paginas(data):
+    try:
+        return len(PdfReader(io.BytesIO(data)).pages)
+    except Exception:
+        return None
+
+
+def extrair_texto(data):
+    try:
+        return "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(data)).pages)
+    except Exception:
+        return ""
+
+
+RX_PAR = re.compile(
+    r"(?<![\d/.,])(\d{1,3})\s*(?:[-–—.:=)]|ª|º)?\s*\)?\s*"
+    r"(?:[Ll]etra\s+|[Aa]lternativa\s+)?"
+    r"((?i:anulad[ao])|[A-E]|X)(?![A-Za-zÀ-ú])"
+)
+
+
+def _limpar(g):
+    """Mantém a sequência contínua de questões (tolera pequenos buracos)."""
+    if not g:
+        return {}
+    ks = sorted(g)
+    out, prev = {}, ks[0] - 1
+    if ks[0] > 5:
+        return {}
+    for k in ks:
+        if k > prev + 3:
+            break
+        out[k] = g[k]
+        prev = k
+    return out
+
+
+def _norm_letra(l):
+    l = l.strip().upper()
+    return "X" if l.startswith("ANULAD") or l == "*" else l
+
+
+def _pares(t):
+    g = {}
+    for m in RX_PAR.finditer(t):
+        n = int(m.group(1))
+        if 1 <= n <= 300 and n not in g:
+            g[n] = _norm_letra(m.group(2))
+    return _limpar(g)
+
+
+def _tabular(t):
+    linhas = [l.split() for l in t.split("\n") if l.strip()]
+    g = {}
+    for a, b in zip(linhas, linhas[1:]):
+        if (len(a) >= 3 and len(a) == len(b) and all(x.isdigit() for x in a)
+                and all(re.fullmatch(r"[A-EX*]|(?i:anulad[ao])", x) for x in b)):
+            for n, l in zip(a, b):
+                g.setdefault(int(n), _norm_letra(l))
+    return _limpar(g)
+
+
+def parse_gabarito_texto(txt, exigir_secao=False, manual=False):
+    """Aceita: '1-A 2-C', '01) B', 'Questão 3: D', tabelas (números / letras),
+    ou uma sequência pura 'ACDBE...'. 'Anulada' vira X (vale para todos)."""
+    if not txt or not txt.strip():
+        return {}
+    t = txt.replace("\r", "\n")
+    if manual:
+        t = t.upper()
+    if not exigir_secao:
+        compacto = re.sub(r"[\s,;.\-]", "", t).upper()
+        if compacto and re.fullmatch(r"[A-EX]+", compacto):
+            return {i + 1: c for i, c in enumerate(compacto)}
+    pos = [m.start() for m in re.finditer(r"(?i)gabarito", t)]
+    if exigir_secao and not pos:
+        return {}
+    blocos = ([t[pos[-1]:]] if pos else []) + ([] if exigir_secao else [t])
+    for bloco in blocos:
+        a, b = _pares(bloco), _tabular(bloco)
+        melhor = a if len(a) >= len(b) else b
+        if len(melhor) >= (1 if manual else 3):
+            return melhor
+    return {}
+
+
+# --------------------------------------------------------------------------- #
+# Estatísticas, XP, ofensiva e humor do Tatti
+# --------------------------------------------------------------------------- #
+def inicio_semana(d=None):
+    d = d or hoje()
+    return d - timedelta(days=d.weekday())
+
+
+def dt0(d):
+    return datetime.combine(d, time.min)
+
+
+def dias_atividade():
+    dias = {r[0].date() for r in db.session.query(Leitura.lida_em).all()}
+    dias |= {r[0].date() for r in db.session.query(Tentativa.feita_em).all()}
+    return dias
+
+
+def ofensiva(dias=None):
+    dias = dias if dias is not None else dias_atividade()
+    d = hoje()
+    if d not in dias:
+        d -= timedelta(days=1)  # a ofensiva continua viva até o fim do dia
+    n = 0
+    while d in dias:
+        n += 1
+        d -= timedelta(days=1)
+    return n
+
+
+def xp_total():
+    xp = 0
+    for (n,) in db.session.query(Leitura.numero).all():
+        xp += 20 if n == 1 else 10
+    xp += sum(x or 0 for (x,) in db.session.query(Tentativa.xp).all())
+    return xp
+
+
+def nivel(xp):
+    return {"nivel": xp // 250 + 1, "no_nivel": xp % 250, "por_nivel": 250}
+
+
+FALAS = {
+    "radiante": ["Isso é ritmo de aprovado! Continue assim.",
+                 "Você está voando! O cargo está ficando com o seu nome.",
+                 "Meta batida. Estou orgulhoso de você!"],
+    "feliz": ["Bom trabalho! Falta pouco para fechar as metas.",
+              "Estamos no caminho certo. Mais um empurrão!",
+              "Gostei de ver. Não pare agora."],
+    "neutro": ["Dá para melhorar. Que tal uma aula agora?",
+               "Hoje é um bom dia para resolver umas questões.",
+               "Estou de olho. Bora estudar?"],
+    "bravo": ["Hmm… as metas estão escapando. Vamos reagir?",
+              "Assim não dá! Cadê o estudo de hoje?",
+              "O edital não vai se estudar sozinho."],
+    "furioso": ["VOCÊ SUMIU! A prova não vai esperar.",
+                "Estou furioso! Volte agora para os estudos.",
+                "Três dias sem estudar?! Abra um PDF já."],
+}
+TITULOS = {"radiante": "Tatti está radiante", "feliz": "Tatti está feliz",
+           "neutro": "Tatti está de olho", "bravo": "Tatti está bravo",
+           "furioso": "Tatti está furioso"}
+
+
+def humor_por_pct(pct, meta):
+    if pct >= meta:
+        return "radiante"
+    if pct >= meta - 10:
+        return "feliz"
+    if pct >= meta - 20:
+        return "neutro"
+    if pct >= 50:
+        return "bravo"
+    return "furioso"
+
+
+def resumo_semana():
+    cfg = configs()
+    h = hoje()
+    ini = dt0(inicio_semana(h))
+    leit = Leitura.query.filter(Leitura.lida_em >= ini).count()
+    tents = Tentativa.query.filter(Tentativa.feita_em >= ini).all()
+    rec = Tentativa.query.filter(Tentativa.feita_em >= dt0(h - timedelta(days=6))).all()
+    r_resp = sum(t.respondidas for t in rec)
+    return {
+        "leituras": leit,
+        "meta_leituras": int(cfg_num(cfg, "meta_leituras_semana")),
+        "questoes": sum(t.respondidas for t in tents),
+        "meta_questoes": int(cfg_num(cfg, "meta_questoes_semana")),
+        "acerto7": round(100 * sum(t.acertos for t in rec) / r_resp, 1) if r_resp else None,
+        "meta_acerto": cfg_num(cfg, "meta_acerto"),
+        "fracao_semana": (h.weekday() + 1) / 7,
+    }
+
+
+def calcular_humor():
+    s = resumo_semana()
+    dias = dias_atividade()
+    h = hoje()
+    if not dias:
+        return {"humor": "neutro", "titulo": "Oi! Eu sou o Tatti",
+                "fala": "Vou acompanhar seus estudos. Bata as metas e eu fico feliz; "
+                        "suma e eu fico bravo. Comece enviando o PDF da primeira aula!",
+                "motivos": [], "semana": s}
+    motivos, pts = [], 0
+    sem = (h - max(dias)).days
+
+    if sem == 0:
+        pts += 2
+        motivos.append((True, "Você estudou hoje"))
+    elif sem == 1:
+        motivos.append((False, "Ainda não estudou hoje"))
+    else:
+        pts -= 3
+        motivos.append((False, f"{sem} dias sem estudar"))
+
+    meta = s["meta_acerto"]
+    if s["acerto7"] is None:
+        pts -= 1
+        motivos.append((False, "Nenhuma questão resolvida nos últimos 7 dias"))
+    elif s["acerto7"] >= meta:
+        pts += 3
+        motivos.append((True, f"Acerto de {s['acerto7']:.0f}% nos últimos 7 dias (meta {meta:.0f}%)"))
+    elif s["acerto7"] >= meta - 15:
+        motivos.append((False, f"Acerto de {s['acerto7']:.0f}%: abaixo da meta de {meta:.0f}%"))
+    else:
+        pts -= 3
+        motivos.append((False, f"Acerto de {s['acerto7']:.0f}%: bem abaixo da meta de {meta:.0f}%"))
+
+    for chave, meta_k, nome in (("leituras", "meta_leituras", "leituras"),
+                                ("questoes", "meta_questoes", "questões")):
+        alvo = s[meta_k]
+        esperado = max(1, round(alvo * s["fracao_semana"]))
+        feito = s[chave]
+        if feito >= alvo:
+            pts += 2
+            motivos.append((True, f"Meta semanal de {nome} batida ({feito}/{alvo})"))
+        elif feito >= esperado:
+            pts += 1
+            motivos.append((True, f"{feito}/{alvo} {nome} na semana — no ritmo"))
+        elif feito >= esperado / 2:
+            motivos.append((False, f"{feito}/{alvo} {nome} na semana — esperado {esperado} até hoje"))
+        else:
+            pts -= 2
+            motivos.append((False, f"{feito}/{alvo} {nome} na semana — atrasado (esperado {esperado})"))
+
+    if sem >= 3:
+        humor = "furioso"
+    elif pts >= 7:
+        humor = "radiante"
+    elif pts >= 3:
+        humor = "feliz"
+    elif pts >= 0:
+        humor = "neutro"
+    elif pts >= -4:
+        humor = "bravo"
+    else:
+        humor = "furioso"
+    return {"humor": humor, "titulo": TITULOS[humor], "fala": random.choice(FALAS[humor]),
+            "motivos": motivos, "semana": s}
+
+
+def stats_materia(m):
+    tents = Tentativa.query.filter_by(materia_id=m.id).order_by(Tentativa.feita_em).all()
+    resp = sum(t.respondidas for t in tents)
+    lidas = sum(1 for a in m.aulas if a.leituras)
+    lidos_top = {a.topico_id for a in m.aulas if a.leituras and a.topico_id}
+    return {
+        "aulas": len(m.aulas),
+        "aulas_lidas": lidas,
+        "leituras": sum(len(a.leituras) for a in m.aulas),
+        "pct_aulas": round(100 * lidas / len(m.aulas)) if m.aulas else 0,
+        "topicos_lidos": lidos_top,
+        "tentativas": len(tents),
+        "questoes": resp,
+        "acerto": round(100 * sum(t.acertos for t in tents) / resp, 1) if resp else None,
+        "ultimo": tents[-1].percentual if tents else None,
+    }
+
+
+def dias_para_prova(cfg):
+    try:
+        return max((date.fromisoformat(cfg["data_prova"]) - hoje()).days, 0)
+    except ValueError:
+        return None
+
+
+# --------------------------------------------------------------------------- #
+# Filtros, contexto e senha opcional
+# --------------------------------------------------------------------------- #
+@app.template_filter("dt")
+def f_dt(v, fmt="%d/%m/%Y %H:%M"):
+    return v.strftime(fmt) if v else "—"
+
+
+@app.template_filter("pct")
+def f_pct(v):
+    return "—" if v is None else f"{v:.0f}%"
+
+
+@app.template_filter("kb")
+def f_kb(v):
+    if not v:
+        return ""
+    return f"{v / 1048576:.1f} MB" if v > 1048576 else f"{v // 1024} KB"
+
+
+@app.context_processor
+def contexto():
+    cfg = configs()
+    return {"cfg": cfg, "dias_prova": dias_para_prova(cfg), "meta_acerto": cfg_num(cfg, "meta_acerto")}
+
+
+@app.before_request
+def exigir_senha():
+    senha = os.environ.get("APP_PASSWORD")
+    if not senha or request.endpoint in ("login", "static") or session.get("ok"):
+        return None
+    return redirect(url_for("login", next=request.path))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        if request.form.get("senha") == os.environ.get("APP_PASSWORD"):
+            session["ok"] = True
+            session.permanent = True
+            nxt = request.args.get("next", "/")
+            return redirect(nxt if nxt.startswith("/") else "/")
+        flash("Senha incorreta.", "erro")
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+# --------------------------------------------------------------------------- #
+# Telas
+# --------------------------------------------------------------------------- #
+@app.route("/")
+def index():
+    materias = Materia.query.order_by(Materia.ordem).all()
+    trilha = [(m, stats_materia(m)) for m in materias]
+    xp = xp_total()
+    tot_aulas = sum(s["aulas"] for _, s in trilha)
+    tot_lidas = sum(s["aulas_lidas"] for _, s in trilha)
+    return render_template("index.html", trilha=trilha, h=calcular_humor(), xp=xp, nv=nivel(xp),
+                           streak=ofensiva(), tot_aulas=tot_aulas, tot_lidas=tot_lidas)
+
+
+@app.route("/materia/<int:mid>")
+def materia(mid):
+    m = db.get_or_404(Materia, mid)
+    return render_template("materia.html", m=m, s=stats_materia(m))
+
+
+def _ler_upload(f):
+    if not f or not f.filename:
+        return None, None
+    data = f.read()
+    if not eh_pdf(data):
+        flash(f"“{f.filename}” não parece ser um PDF válido.", "erro")
+        return None, None
+    return data, f.filename
+
+
+@app.post("/materia/<int:mid>/aulas")
+def aula_nova(mid):
+    m = db.get_or_404(Materia, mid)
+    arquivos = [f for f in request.files.getlist("pdfs") if f and f.filename]
+    topico_id = request.form.get("topico_id", type=int) or None
+    titulo = request.form.get("titulo", "").strip()
+    n = 0
+    for f in arquivos:
+        data, nome = _ler_upload(f)
+        if not data:
+            continue
+        t = titulo if (titulo and len(arquivos) == 1) else os.path.splitext(nome)[0]
+        db.session.add(Aula(materia_id=m.id, topico_id=topico_id, titulo=t[:200], arquivo_nome=nome[:200],
+                            pdf=data, paginas=contar_paginas(data), tamanho=len(data)))
+        n += 1
+    db.session.commit()
+    if n:
+        flash(f"{n} aula(s) adicionada(s). Agora é ler!", "ok")
+    elif not arquivos:
+        flash("Escolha ao menos um PDF.", "erro")
+    return redirect(url_for("materia", mid=mid) + "#aulas")
+
+
+@app.route("/aula/<int:aid>")
+def aula_ver(aid):
+    a = db.get_or_404(Aula, aid)
+    return render_template("aula.html", a=a, m=a.materia)
+
+
+@app.route("/aula/<int:aid>/pdf")
+def aula_pdf(aid):
+    a = db.get_or_404(Aula, aid)
+    if not a.pdf:
+        abort(404)
+    return send_file(io.BytesIO(a.pdf), mimetype="application/pdf",
+                     download_name=secure_filename(a.arquivo_nome or f"aula-{aid}.pdf") or "aula.pdf")
+
+
+@app.post("/aula/<int:aid>/ler")
+def aula_ler(aid):
+    a = db.get_or_404(Aula, aid)
+    n = len(a.leituras) + 1
+    db.session.add(Leitura(aula_id=a.id, numero=n, lida_em=agora()))
+    db.session.commit()
+    flash(f"{n}ª leitura registrada! +{20 if n == 1 else 10} XP", "ok")
+    return redirect(url_for("aula_ver", aid=aid))
+
+
+@app.post("/aula/<int:aid>/desfazer")
+def aula_desfazer(aid):
+    a = db.get_or_404(Aula, aid)
+    if a.leituras:
+        db.session.delete(a.leituras[-1])
+        db.session.commit()
+        flash("Última leitura removida.", "info")
+    return redirect(url_for("aula_ver", aid=aid))
+
+
+@app.post("/aula/<int:aid>/editar")
+def aula_editar(aid):
+    a = db.get_or_404(Aula, aid)
+    t = request.form.get("titulo", "").strip()
+    if t:
+        a.titulo = t[:200]
+    a.topico_id = request.form.get("topico_id", type=int) or None
+    db.session.commit()
+    flash("Aula atualizada.", "ok")
+    return redirect(url_for("aula_ver", aid=aid))
+
+
+@app.post("/aula/<int:aid>/excluir")
+def aula_excluir(aid):
+    a = db.get_or_404(Aula, aid)
+    mid = a.materia_id
+    db.session.delete(a)
+    db.session.commit()
+    flash("Aula excluída.", "info")
+    return redirect(url_for("materia", mid=mid) + "#aulas")
+
+
+# ---- Questões ------------------------------------------------------------- #
+@app.post("/materia/<int:mid>/cadernos")
+def caderno_novo(mid):
+    m = db.get_or_404(Materia, mid)
+    dq, nome = _ler_upload(request.files.get("pdf_questoes"))
+    if not dq:
+        flash("Envie o PDF com as questões.", "erro")
+        return redirect(url_for("materia", mid=mid) + "#questoes")
+    dg, _ = _ler_upload(request.files.get("pdf_gabarito"))
+    texto = request.form.get("gabarito_texto", "")
+
+    gab, origem = {}, ""
+    if texto.strip():
+        gab, origem = parse_gabarito_texto(texto, manual=True), "texto digitado"
+    if not gab and dg:
+        gab, origem = parse_gabarito_texto(extrair_texto(dg)), "PDF do gabarito"
+    if not gab:
+        gab, origem = parse_gabarito_texto(extrair_texto(dq), exigir_secao=True), "PDF das questões"
+
+    titulo = request.form.get("titulo", "").strip() or os.path.splitext(nome)[0]
+    c = Caderno(materia_id=m.id, titulo=titulo[:200], arquivo_nome=nome[:200], pdf_questoes=dq,
+                pdf_gabarito=dg, tem_pdf_gabarito=bool(dg))
+    c.gabarito = gab
+    db.session.add(c)
+    db.session.commit()
+    if gab:
+        flash(f"Caderno criado: {len(gab)} questões lidas do {origem}. Confira o gabarito antes de resolver.", "ok")
+    else:
+        flash("Caderno criado, mas não consegui ler o gabarito automaticamente. Digite-o abaixo.", "erro")
+    return redirect(url_for("caderno_gabarito", cid=c.id))
+
+
+@app.route("/caderno/<int:cid>/pdf/<tipo>")
+def caderno_pdf(cid, tipo):
+    c = db.get_or_404(Caderno, cid)
+    data = c.pdf_questoes if tipo == "questoes" else c.pdf_gabarito if tipo == "gabarito" else None
+    if not data:
+        abort(404)
+    return send_file(io.BytesIO(data), mimetype="application/pdf",
+                     download_name=f"caderno-{cid}-{tipo}.pdf")
+
+
+@app.route("/caderno/<int:cid>/gabarito", methods=["GET", "POST"])
+def caderno_gabarito(cid):
+    c = db.get_or_404(Caderno, cid)
+    if request.method == "POST":
+        gab = parse_gabarito_texto(request.form.get("gabarito", ""), manual=True)
+        t = request.form.get("titulo", "").strip()
+        if t:
+            c.titulo = t[:200]
+        if not gab:
+            flash("Não entendi o gabarito. Use uma linha por questão, ex.: 1-A", "erro")
+        else:
+            c.gabarito = gab
+            db.session.commit()
+            flash(f"Gabarito salvo: {len(gab)} questões.", "ok")
+            return redirect(url_for("caderno_resolver", cid=cid))
+    texto = "\n".join(f"{n}-{l}" for n, l in c.gabarito.items())
+    return render_template("gabarito.html", c=c, m=c.materia, texto=texto)
+
+
+@app.route("/caderno/<int:cid>", methods=["GET", "POST"])
+def caderno_resolver(cid):
+    c = db.get_or_404(Caderno, cid)
+    gab = c.gabarito
+    if not gab:
+        flash("Este caderno ainda não tem gabarito.", "erro")
+        return redirect(url_for("caderno_gabarito", cid=cid))
+    if request.method == "POST":
+        resp = {n: request.form.get(f"q{n}") for n in gab}
+        resp = {n: v for n, v in resp.items() if v in LETRAS}
+        if not resp:
+            flash("Marque ao menos uma resposta.", "erro")
+            return redirect(url_for("caderno_resolver", cid=cid))
+        acertos = sum(1 for n, v in resp.items() if gab[n] in ("X", v))
+        pct = 100 * acertos / len(resp)
+        meta = cfg_num(configs(), "meta_acerto")
+        xp = acertos + (25 if pct >= meta and len(resp) >= 5 else 0)
+        t = Tentativa(caderno_id=c.id, materia_id=c.materia_id, feita_em=agora(), acertos=acertos,
+                      respondidas=len(resp), total=len(gab), xp=xp,
+                      respostas_json=json.dumps({str(k): v for k, v in resp.items()}))
+        db.session.add(t)
+        db.session.commit()
+        return redirect(url_for("tentativa_ver", tid=t.id))
+    return render_template("resolver.html", c=c, m=c.materia, gab=gab, letras=LETRAS)
+
+
+@app.route("/tentativa/<int:tid>")
+def tentativa_ver(tid):
+    t = db.get_or_404(Tentativa, tid)
+    gab, resp = t.caderno.gabarito, t.respostas
+    linhas = [{"n": n, "sua": resp.get(n), "certa": g,
+               "ok": (n in resp and g in ("X", resp[n])), "branco": n not in resp}
+              for n, g in gab.items()]
+    meta = cfg_num(configs(), "meta_acerto")
+    anteriores = [x for x in t.caderno.tentativas if x.id != t.id and x.feita_em <= t.feita_em]
+    return render_template("resultado.html", t=t, c=t.caderno, m=t.caderno.materia, linhas=linhas,
+                           humor=humor_por_pct(t.percentual, meta),
+                           anterior=anteriores[-1] if anteriores else None)
+
+
+@app.post("/tentativa/<int:tid>/excluir")
+def tentativa_excluir(tid):
+    t = db.get_or_404(Tentativa, tid)
+    cid = t.caderno_id
+    db.session.delete(t)
+    db.session.commit()
+    flash("Tentativa removida do histórico.", "info")
+    return redirect(url_for("caderno_resolver", cid=cid))
+
+
+@app.post("/caderno/<int:cid>/excluir")
+def caderno_excluir(cid):
+    c = db.get_or_404(Caderno, cid)
+    mid = c.materia_id
+    db.session.delete(c)
+    db.session.commit()
+    flash("Caderno excluído.", "info")
+    return redirect(url_for("materia", mid=mid) + "#questoes")
+
+
+# ---- Histórico e metas ---------------------------------------------------- #
+@app.route("/historico")
+def historico():
+    materias = Materia.query.order_by(Materia.ordem).all()
+    tents = Tentativa.query.order_by(Tentativa.feita_em).all()
+    pontos = [{"d": t.feita_em.strftime("%d/%m"), "p": t.percentual, "m": t.materia.nome,
+               "cor": t.materia.cor, "c": t.caderno.titulo, "q": t.respondidas} for t in tents]
+    semanas = []
+    ini = inicio_semana()
+    leituras = [r[0] for r in db.session.query(Leitura.lida_em).all()]
+    for i in range(11, -1, -1):
+        a = ini - timedelta(weeks=i)
+        b = a + timedelta(days=7)
+        ts = [t for t in tents if a <= t.feita_em.date() < b]
+        resp = sum(t.respondidas for t in ts)
+        semanas.append({"rot": a.strftime("%d/%m"),
+                        "leituras": sum(1 for l in leituras if a <= l.date() < b),
+                        "questoes": resp,
+                        "acerto": round(100 * sum(t.acertos for t in ts) / resp, 1) if resp else None})
+    eventos = ([("leitura", l.lida_em, l) for l in Leitura.query.order_by(Leitura.lida_em.desc()).limit(15)]
+               + [("questoes", t.feita_em, t) for t in reversed(tents[-15:])])
+    eventos.sort(key=lambda e: e[1], reverse=True)
+    return render_template("historico.html", materias=[(m, stats_materia(m)) for m in materias],
+                           pontos=pontos, semanas=semanas, eventos=eventos[:20])
+
+
+@app.route("/metas", methods=["GET", "POST"])
+def metas():
+    if request.method == "POST":
+        for k in DEFAULTS:
+            v = request.form.get(k, "").strip()
+            if not v:
+                continue
+            if k == "data_prova":
+                try:
+                    date.fromisoformat(v)
+                except ValueError:
+                    flash("Data da prova inválida.", "erro")
+                    continue
+            elif k != "nome":
+                try:
+                    v = str(max(0, min(1000, int(float(v)))))
+                except ValueError:
+                    continue
+            c = db.session.get(Config, k) or Config(chave=k)
+            c.valor = v[:200]
+            db.session.add(c)
+        db.session.commit()
+        flash("Metas salvas. O Tatti já está de olho!", "ok")
+        return redirect(url_for("metas"))
+    return render_template("metas.html", h=calcular_humor())
+
+
+@app.errorhandler(413)
+def muito_grande(_):
+    flash(f"Arquivo grande demais (limite {app.config['MAX_CONTENT_LENGTH'] // 1048576} MB).", "erro")
+    return redirect(request.referrer or url_for("index"))
+
+
+if __name__ == "__main__":
+    app.run(debug=True, port=int(os.environ.get("PORT", 5000)))

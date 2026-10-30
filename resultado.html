@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "_tatti.html" import tatti %}
+{% block titulo %}Resultado{% endblock %}
+{% block css %}
+.res{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
+@media (max-width:560px){.res{grid-template-columns:1fr;justify-items:center;text-align:center}}
+.big{font-size:3.4rem;font-weight:900;line-height:1}
+.gabgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:8px}
+.gq{border:2px solid var(--line);border-radius:12px;padding:6px 8px;text-align:center;font-size:.85rem}
+.gq b{display:block;font-size:.8rem;color:var(--mut)}
+.gq.ok{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 10%,transparent)}
+.gq.er{border-color:var(--err);background:color-mix(in srgb,var(--err) 10%,transparent)}
+{% endblock %}
+{% block conteudo %}
+{% set p = t.percentual %}
+{% set frases = {'radiante':'Meta batida! É assim que se passa no TJSP.','feliz':'Quase lá! Falta pouco para os %d%%.'|format(meta_acerto|int),
+  'neutro':'Dá para melhorar. Revise os erros e refaça.','bravo':'Isso está abaixo do esperado. Volte para a aula!','furioso':'Resultado inaceitável! Releia o PDF e tente de novo.'} %}
+<a href="{{ url_for('materia', mid=m.id) }}#questoes" class="mut" style="text-decoration:none;font-weight:800">‹ {{ m.nome }}</a>
+<section class="card res" style="margin-top:8px">
+  {{ tatti(humor, 160) }}
+  <div>
+    <div class="big" style="color:{{ 'var(--ok)' if p >= meta_acerto else 'var(--err)' }}">{{ p|pct }}</div>
+    <p style="margin:4px 0 8px;font-weight:800">{{ frases[humor] }}</p>
+    <div class="row" style="justify-content:inherit">
+      <span class="tag ok">{{ t.acertos }} acerto{{ "" if t.acertos == 1 else "s" }}</span>
+      {% set er = t.respondidas - t.acertos %}<span class="tag err">{{ er }} erro{{ "" if er == 1 else "s" }}</span>
+      {% if t.total > t.respondidas %}<span class="tag">{{ t.total - t.respondidas }} em branco</span>{% endif %}
+      <span class="tag xp">+{{ t.xp }} XP</span>
+    </div>
+    {% if anterior %}
+    {% set dif = p - anterior.percentual %}
+    <p class="hint">Tentativa anterior: {{ anterior.percentual|pct }} ({{ '+' if dif >= 0 else '' }}{{ dif|round(0)|int }} p.p.)</p>
+    {% endif %}
+  </div>
+</section>
+
+<div class="row" style="margin-bottom:16px">
+  <a class="btn ouro" href="{{ url_for('caderno_resolver', cid=c.id) }}">Refazer caderno</a>
+  <a class="btn claro" href="{{ url_for('materia', mid=m.id) }}">Voltar à matéria</a>
+</div>
+
+<section class="card">
+  <h2>Correção — {{ c.titulo }}</h2>
+  <div class="gabgrid">
+    {% for l in linhas %}
+    <div class="gq {{ 'ok' if l.ok else ('' if l.branco else 'er') }}">
+      <b>Q{{ l.n }}</b>
+      {% if l.branco %}— · <strong>{{ l.certa }}</strong>
+      {% elif l.ok %}<strong>{{ l.sua }}</strong>{% if l.certa == 'X' %} (anulada){% endif %}
+      {% else %}<s>{{ l.sua }}</s> → <strong>{{ l.certa }}</strong>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <form method="post" action="{{ url_for('tentativa_excluir', tid=t.id) }}" style="margin-top:14px"
+        onsubmit="return confirm('Remover esta tentativa do histórico?')">
+    <button class="btn claro mini">Excluir esta tentativa</button>
+  </form>
+</section>
+{% endblock %}

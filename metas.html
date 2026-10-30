@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "_tatti.html" import tatti %}
+{% block titulo %}Metas{% endblock %}
+{% block conteudo %}
+<h1>Metas</h1>
+<p class="sub">O humor do Tatti é calculado a partir destas metas.</p>
+<div class="grid g2">
+  <form class="card" method="post">
+    <label class="f">Seu nome</label>
+    <input type="text" name="nome" value="{{ cfg.nome }}">
+    <label class="f">Data da prova</label>
+    <input type="date" name="data_prova" value="{{ cfg.data_prova }}">
+    <label class="f">Meta de acerto nas questões (%)</label>
+    <input type="number" name="meta_acerto" min="1" max="100" value="{{ cfg.meta_acerto }}">
+    <label class="f">Leituras de PDF por semana</label>
+    <input type="number" name="meta_leituras_semana" min="0" value="{{ cfg.meta_leituras_semana }}">
+    <label class="f">Questões por semana</label>
+    <input type="number" name="meta_questoes_semana" min="0" value="{{ cfg.meta_questoes_semana }}">
+    <div style="margin-top:14px"><button class="btn">Salvar metas</button></div>
+  </form>
+  <div class="card">
+    <h2>Como o Tatti reage</h2>
+    <div class="row" style="justify-content:space-between;margin-bottom:10px">
+      {% for hm in ['furioso','bravo','neutro','feliz','radiante'] %}
+      <div style="text-align:center;font-size:.75rem;font-weight:800" class="mut">{{ tatti(hm, 60) }}{{ hm }}</div>
+      {% endfor %}
+    </div>
+    <ul style="padding-left:18px;margin:0;font-size:.92rem">
+      <li><b>Radiante</b>: estudou hoje, acerto ≥ {{ cfg.meta_acerto }}% e metas da semana em dia.</li>
+      <li><b>Feliz</b>: a maior parte das metas no ritmo.</li>
+      <li><b>De olho</b>: metas atrasando ou sem questões recentes.</li>
+      <li><b>Bravo</b>: acerto bem abaixo da meta ou semana atrasada.</li>
+      <li><b>Furioso</b>: 3 dias ou mais sem estudar.</li>
+    </ul>
+    <p class="hint">As metas semanais são proporcionais ao dia: na quarta, o Tatti espera ~3/7 da meta.</p>
+    <p style="margin-top:14px">Agora: <b>{{ h.titulo }}</b></p>
+  </div>
+</div>
+{% endblock %}

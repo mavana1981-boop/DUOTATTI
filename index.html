@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% from "_tatti.html" import tatti %}
+{% block titulo %}Aprender{% endblock %}
+{% block css %}
+.hero{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
+@media (max-width:560px){.hero{grid-template-columns:1fr;justify-items:center;text-align:center}}
+.motivos{list-style:none;margin:10px 0 0;padding:0;font-size:.92rem}
+.motivos li{display:flex;gap:8px;align-items:flex-start;padding:3px 0;text-align:left}
+.motivos .ic{flex:none;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:900;font-size:.75rem;margin-top:1px}
+.motivos .s{background:var(--ok)}.motivos .n{background:var(--err)}
+.trilha{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.mat{display:flex;gap:12px;align-items:center;text-decoration:none;color:var(--ink);background:var(--card);border:2px solid var(--line);border-bottom-width:5px;border-radius:18px;padding:14px;transition:transform .06s}
+.mat:active{transform:translateY(2px)}
+.anel{flex:none;width:58px;height:58px;border-radius:50%;display:grid;place-items:center;
+background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
+.anel span{width:44px;height:44px;border-radius:50%;background:var(--card);display:grid;place-items:center;font-weight:900;font-size:.85rem}
+.mat h3{margin:0;font-size:1rem;font-weight:900;line-height:1.2}
+.mat small{color:var(--mut);font-weight:700;display:block}
+{% endblock %}
+{% block conteudo %}
+{% set s = h.semana %}
+<section class="card hero">
+  {{ tatti(h.humor, 170) }}
+  <div class="balao">
+    <h2 style="margin:0 0 4px">{{ h.titulo }}</h2>
+    <p style="margin:0;font-weight:700">{{ h.fala }}</p>
+    {% if h.motivos %}
+    <ul class="motivos">
+      {% for ok, txt in h.motivos %}
+      <li><span class="ic {{ 's' if ok else 'n' }}">{{ '✓' if ok else '!' }}</span><span>{{ txt }}</span></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+</section>
+
+<section class="grid g4" style="margin-bottom:16px">
+  <div class="stat"><small>Ofensiva</small><b style="color:var(--xp2)">{{ streak }} {{ 'dia' if streak == 1 else 'dias' }}</b></div>
+  <div class="stat"><small>Nível {{ nv.nivel }} · {{ xp }} XP</small>
+    <div class="bar ouro" style="margin-top:10px"><i style="width:{{ (100 * nv.no_nivel / nv.por_nivel)|round }}%"></i></div>
+    <small>{{ nv.por_nivel - nv.no_nivel }} XP para o nível {{ nv.nivel + 1 }}</small></div>
+  <div class="stat"><small>Acerto (7 dias)</small>
+    <b style="color:{{ 'var(--mut)' if s.acerto7 is none else ('var(--ok)' if s.acerto7 >= s.meta_acerto else 'var(--err)') }}">{{ s.acerto7|pct }}</b>
+    <small>meta {{ s.meta_acerto|pct }}</small></div>
+  <div class="stat"><small>Aulas lidas (1ª volta)</small><b>{{ tot_lidas }}/{{ tot_aulas }}</b>
+    <small>{{ dias_prova if dias_prova is not none else '—' }} dias para a prova</small></div>
+</section>
+
+<section class="card">
+  <h2>Metas da semana</h2>
+  {% set pl = [100, (100 * s.leituras / s.meta_leituras) if s.meta_leituras else 100]|min %}
+  {% set pq = [100, (100 * s.questoes / s.meta_questoes) if s.meta_questoes else 100]|min %}
+  <div class="row"><b>Leituras de PDF</b><span class="right mut">{{ s.leituras }}/{{ s.meta_leituras }}</span></div>
+  <div class="bar azul" style="margin:6px 0 12px"><i style="width:{{ pl|round }}%"></i></div>
+  <div class="row"><b>Questões resolvidas</b><span class="right mut">{{ s.questoes }}/{{ s.meta_questoes }}</span></div>
+  <div class="bar" style="margin:6px 0 12px"><i style="width:{{ pq|round }}%"></i></div>
+  <div class="row"><b>Acerto nos últimos 7 dias</b><span class="right mut">{{ s.acerto7|pct }} de {{ s.meta_acerto|pct }}</span></div>
+  <div class="bar {{ 'vermelho' if s.acerto7 is not none and s.acerto7 < s.meta_acerto else 'ouro' }}" style="margin-top:6px">
+    <i style="width:{{ ([100, 100 * (s.acerto7 or 0) / s.meta_acerto]|min)|round if s.meta_acerto else 0 }}%"></i></div>
+</section>
+
+<h2>Sua trilha</h2>
+<div class="trilha">
+  {% for m, st in trilha %}
+  <a class="mat" href="{{ url_for('materia', mid=m.id) }}">
+    <div class="anel" style="--c:{{ m.cor }};--p:{{ st.pct_aulas }}"><span>{{ st.pct_aulas }}%</span></div>
+    <div>
+      <h3>{{ m.nome }}</h3>
+      <small>{{ st.aulas_lidas }}/{{ st.aulas }} aulas lidas · {{ st.leituras }} leitura{{ '' if st.leituras == 1 else 's' }}</small>
+      {% if st.acerto is not none %}
+        <span class="tag {{ 'ok' if st.acerto >= meta_acerto else 'err' }}">{{ st.acerto|pct }} de acerto</span>
+      {% else %}<span class="tag">sem questões</span>{% endif %}
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}
