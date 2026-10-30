@@ -47,7 +47,7 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
 <section class="card">
   <h2>Tópicos do edital e seus assuntos</h2>
   <ul class="tops">
-    {% for t in m.topicos %}<li><span class="d {{ 'ok' if t.id in s.topicos_lidos }}"></span><span>{{ t.nome }}{% if t.personalizado %} <span class="tag">assunto</span>{% endif %}</span></li>{% endfor %}
+    {% for t in m.topicos %}<li><span class="d {{ 'ok' if t.id in s.topicos_lidos }}"></span><span>{% set pt = t.nome.split(' — ', 1) %}{% if pt|length > 1 %}<b>{{ pt[0] }}</b> — {{ pt[1] }}{% else %}{{ t.nome }}{% endif %}{% if t.personalizado %} <span class="tag">assunto</span>{% endif %}</span></li>{% endfor %}
   </ul>
   <p class="hint">O tópico fica verde quando uma aula ligada a ele é lida. Os assuntos dados aos cadernos de questões entram aqui automaticamente.</p>
 </section>

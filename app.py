@@ -185,25 +185,42 @@ MATERIAS = [
         "Classes de palavras", "Concordância verbal e nominal", "Regência verbal e nominal",
         "Colocação pronominal", "Crase", "Pontuação"]),
     ("Direito Penal", None, "CP · bloco de Direito (30 questões)", "#e5484d", [
-        "Arts. 293 a 311-A", "Arts. 312 a 317", "Arts. 319 a 333",
-        "Arts. 336, 337 e 339 a 347", "Arts. 357 e 359"]),
+        "Arts. 293 a 311-A — Crimes contra a fé pública: falsidade de papéis públicos, falsidade documental, outras falsidades e fraudes em certames",
+        "Arts. 312 a 317 — Crimes de funcionário público: peculato, inserção de dados falsos, extravio de documento, emprego irregular de verbas, concussão e corrupção passiva",
+        "Arts. 319 a 333 — Prevaricação, condescendência, advocacia administrativa, violação de sigilo, conceito de funcionário público e crimes de particular (resistência, desobediência, desacato, tráfico de influência, corrupção ativa)",
+        "Arts. 336, 337 e 339 a 347 — Inutilização de edital ou documento e crimes contra a administração da justiça (denunciação caluniosa, falso testemunho, coação no processo, exercício arbitrário, fraude processual)",
+        "Arts. 357 e 359 — Exploração de prestígio e desobediência a decisão judicial sobre perda ou suspensão de direito"]),
     ("Direito Processual Penal", None, "CPP e Lei 9.099", "#d6409f", [
-        "CPP arts. 251 a 274", "CPP arts. 351 a 372", "CPP arts. 394 a 497",
-        "CPP arts. 531 a 548", "CPP arts. 574 a 667", "Lei 9.099/95 arts. 60 a 83, 88 e 89"]),
+        "CPP arts. 251 a 274 — Sujeitos do processo: juiz, Ministério Público, acusado e defensor, assistente e auxiliares da justiça",
+        "CPP arts. 351 a 372 — Citações e intimações",
+        "CPP arts. 394 a 497 — Procedimento comum (instrução criminal) e Tribunal do Júri",
+        "CPP arts. 531 a 548 — Procedimento sumário e restauração de autos",
+        "CPP arts. 574 a 667 — Recursos (RESE, apelação, embargos, carta testemunhável), revisão criminal e habeas corpus",
+        "Lei 9.099/95 arts. 60 a 83, 88 e 89 — Juizado Especial Criminal: transação penal, procedimento sumaríssimo, representação e suspensão condicional do processo"]),
     ("Direito Processual Civil", None, "CPC e Juizados", "#8e4ec6", [
-        "CPC arts. 144 a 155", "CPC arts. 188 a 275", "CPC arts. 294 a 311",
-        "CPC arts. 318 a 404", "CPC arts. 405 a 538", "CPC arts. 994 a 1026",
-        "Lei 9.099/95 arts. 3 a 19", "Lei 12.153/2009"]),
+        "CPC arts. 144 a 155 — Impedimento, suspeição e auxiliares da justiça (escrivão e oficial de justiça)",
+        "CPC arts. 188 a 275 — Atos processuais: forma, tempo, lugar, prazos, citação, cartas e intimações",
+        "CPC arts. 294 a 311 — Tutela provisória: urgência (antecipada e cautelar) e evidência",
+        "CPC arts. 318 a 404 — Procedimento comum: petição inicial, audiência de conciliação, contestação, revelia, saneamento e provas (parte geral)",
+        "CPC arts. 405 a 538 — Provas em espécie, sentença, coisa julgada, liquidação e cumprimento de sentença",
+        "CPC arts. 994 a 1026 — Recursos: disposições gerais, apelação, agravo de instrumento, agravo interno e embargos de declaração",
+        "Lei 9.099/95 arts. 3 a 19 — Juizado Especial Cível: competência, partes, atos processuais, pedido, citações e intimações",
+        "Lei 12.153/2009 — Juizados Especiais da Fazenda Pública"]),
     ("Direito Constitucional", None, "CF", "#e8a317", [
-        "CF Título II, Capítulos I a III (direitos e garantias)",
-        "CF Título III, Capítulo VII, Seções I e II (administração pública)", "CF art. 92"]),
+        "CF art. 5º — Direitos e deveres individuais e coletivos (Título II, Cap. I)",
+        "CF arts. 6º a 11 — Direitos sociais (Título II, Cap. II)",
+        "CF arts. 12 e 13 — Nacionalidade (Título II, Cap. III)",
+        "CF arts. 37 e 38 — Administração Pública: disposições gerais (Título III, Cap. VII, Seção I)",
+        "CF arts. 39 a 41 — Servidores públicos (Título III, Cap. VII, Seção II)",
+        "CF art. 92 — Órgãos do Poder Judiciário"]),
     ("Direito Administrativo", None, "Estatuto e improbidade", "#12a594", [
-        "Lei 10.261/68 arts. 1 a 86", "Lei 10.261/68 arts. 171 a 175 e 239 a 323",
-        "Lei 8.429/92 (improbidade)"]),
+        "Lei 10.261/68 arts. 1 a 86 — Estatuto dos Servidores de SP: disposições preliminares, cargos, provimento (concurso, nomeação, posse, exercício) e vacância",
+        "Lei 10.261/68 arts. 171 a 175 e 239 a 323 — Estatuto dos Servidores de SP: deveres, proibições, responsabilidades, penalidades e processo disciplinar",
+        "Lei 8.429/92 — Improbidade administrativa: atos, sanções e procedimento"]),
     ("Legislação interna do TJSP", None, "Resoluções e normas", "#0b8fd6", [
-        "Resolução TJSP 850/2021 (teletrabalho)", "Resolução TJSP 963/2025 (eproc)",
-        "LC 1.111/2010 (plano de cargos)", "Regimento Interno do TJSP",
-        "Normas da Corregedoria, Tomo I"]),
+        "Resolução TJSP 850/2021 — Teletrabalho", "Resolução TJSP 963/2025 — Governança e uso do eproc",
+        "LC 1.111/2010 — Plano de cargos e carreiras dos servidores do TJSP", "Regimento Interno do TJSP",
+        "Normas da Corregedoria, Tomo I — Seções indicadas no edital (Caps. II e III)"]),
     ("Conhecimentos Gerais", 24, "Classificatória", "#46a758", [
         "Atualidades (fatos a partir de 2026)",
         "Estatuto da Pessoa com Deficiência (arts. 1–13 e 34–38)",
@@ -215,6 +232,24 @@ MATERIAS = [
         "Raciocínio lógico: estruturas e argumentação",
         "Raciocínio lógico: sequências e diagramas"]),
 ]
+
+# nomes antigos dos tópicos -> novo nome (para atualizar bancos já criados)
+RENOMEAR_TOPICOS = {
+    "CF Título II, Capítulos I a III (direitos e garantias)": "CF art. 5º — Direitos e deveres individuais e coletivos (Título II, Cap. I)",
+    "CF Título III, Capítulo VII, Seções I e II (administração pública)": "CF arts. 37 e 38 — Administração Pública: disposições gerais (Título III, Cap. VII, Seção I)",
+    "CF art. 92": "CF art. 92 — Órgãos do Poder Judiciário",
+    "Lei 10.261/68 arts. 1 a 86": "Lei 10.261/68 arts. 1 a 86 — Estatuto dos Servidores de SP: disposições preliminares, cargos, provimento (concurso, nomeação, posse, exercício) e vacância",
+    "Lei 10.261/68 arts. 171 a 175 e 239 a 323": "Lei 10.261/68 arts. 171 a 175 e 239 a 323 — Estatuto dos Servidores de SP: deveres, proibições, responsabilidades, penalidades e processo disciplinar",
+    "Lei 8.429/92 (improbidade)": "Lei 8.429/92 — Improbidade administrativa: atos, sanções e procedimento",
+    "Resolução TJSP 850/2021 (teletrabalho)": "Resolução TJSP 850/2021 — Teletrabalho",
+    "Resolução TJSP 963/2025 (eproc)": "Resolução TJSP 963/2025 — Governança e uso do eproc",
+    "LC 1.111/2010 (plano de cargos)": "LC 1.111/2010 — Plano de cargos e carreiras dos servidores do TJSP",
+    "Normas da Corregedoria, Tomo I": "Normas da Corregedoria, Tomo I — Seções indicadas no edital (Caps. II e III)",
+}
+for _m in MATERIAS:  # itens antigos sem assunto: "Arts. 312 a 317" -> "Arts. 312 a 317 — ..."
+    for _t in _m[4]:
+        if " — " in _t:
+            RENOMEAR_TOPICOS.setdefault(_t.split(" — ")[0], _t)
 
 
 def seed():
@@ -237,6 +272,30 @@ def migrar(conn):
     for tabela, coluna, tipo in NOVAS_COLUNAS:
         if coluna not in {c["name"] for c in insp.get_columns(tabela)}:
             conn.exec_driver_sql(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
+
+
+def atualizar_topicos_edital():
+    """Deixa os itens do edital com o assunto no nome, sem perder vínculos das aulas."""
+    for m in Materia.query.all():
+        alvo = next((x[4] for x in MATERIAS if x[0] == m.nome), None)
+        if not alvo:
+            continue
+        existentes = [t for t in m.topicos if not t.personalizado]
+        nomes = {t.nome for t in existentes}
+        for t in existentes:
+            novo = RENOMEAR_TOPICOS.get(t.nome)
+            if novo and novo not in nomes:
+                nomes.discard(t.nome)
+                t.nome = novo
+                nomes.add(novo)
+        por_nome = {t.nome: t for t in existentes}
+        for i, nome in enumerate(alvo):
+            t = por_nome.get(nome)
+            if t is None:
+                t = Topico(materia_id=m.id, nome=nome, personalizado=False)
+                db.session.add(t)
+            t.ordem = i
+    db.session.commit()
 
 
 def garantir_topico(materia_id, nome):
@@ -276,6 +335,7 @@ def init_db():
                     with db.engine.begin() as conn:
                         migrar(conn)
                 seed()
+                atualizar_topicos_edital()
                 assuntos_para_topicos()
                 return
             except Exception as e:  # outro worker criou primeiro: espera e tenta de novo
