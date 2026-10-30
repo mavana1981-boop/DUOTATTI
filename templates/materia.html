@@ -6,6 +6,17 @@
 .item:last-child{border-bottom:0}
 .item .nome{font-weight:800;line-height:1.25}
 .item .det{color:var(--mut);font-size:.82rem}
+.nome-ed{display:flex;align-items:center;gap:4px}
+input[type=text].renomear{flex:1;min-width:0;font:inherit;font-weight:800;color:var(--ink);background:transparent;border:2px solid transparent;border-radius:9px;padding:3px 6px;width:auto;margin-left:-8px;text-overflow:ellipsis}
+input[type=text].renomear:hover{border-color:var(--line)}
+input[type=text].renomear:focus{outline:none;border-color:var(--blue);background:var(--bg)}
+input[type=text].renomear.salvo{border-color:var(--ok)}
+.lapis{flex:none;width:16px;height:16px;color:var(--mut);opacity:.6}
+.nome-ed:focus-within .lapis{display:none}
+.excluir{margin:0}
+.lixo{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;border:2px solid transparent;background:transparent;color:var(--mut);cursor:pointer;padding:0}
+.lixo svg{width:18px;height:18px}
+.lixo:hover,.lixo:focus-visible{color:var(--err);border-color:color-mix(in srgb,var(--err) 40%,transparent);background:color-mix(in srgb,var(--err) 8%,transparent)}
 .num{flex:none;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;font-weight:900;background:var(--soft);color:var(--mut)}
 .num.lida{background:{{ m.cor }};color:#fff}
 .tops{list-style:none;margin:0;padding:0;columns:2 260px}
@@ -43,9 +54,7 @@
     <form method="post" action="{{ url_for('aula_nova', mid=m.id) }}" enctype="multipart/form-data">
       <label class="f">Arquivos PDF</label>
       <input type="file" name="pdfs" accept="application/pdf,.pdf" multiple required>
-      <p class="hint">Pode enviar vários de uma vez — cada PDF vira uma aula.</p>
-      <label class="f">Título (opcional, só para 1 arquivo)</label>
-      <input type="text" name="titulo" placeholder="Ex.: Aula 03 — Crase">
+      <p class="hint">Pode enviar vários de uma vez — cada PDF vira uma aula com o nome do arquivo (dá para renomear depois).</p>
       <label class="f">Tópico do edital (opcional)</label>
       <select name="topico_id"><option value="">—</option>
         {% for t in m.topicos %}<option value="{{ t.id }}">{{ t.nome }}</option>{% endfor %}</select>
@@ -57,13 +66,23 @@
   <div class="item">
     <div class="num {{ 'lida' if n }}">{{ n }}x</div>
     <div style="flex:1;min-width:0">
-      <div class="nome">{{ a.titulo }}</div>
+      <div class="nome-ed">
+        <input type="text" class="renomear" value="{{ a.titulo }}" data-aula="{{ a.id }}" data-arquivo="{{ a.arquivo_nome or '' }}"
+               maxlength="200" aria-label="Nome da aula" title="Clique para renomear">
+        <svg class="lapis" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z M14 6l4 4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>
+      </div>
       <div class="det">
         {% if n %}última leitura {{ a.leituras[-1].lida_em|dt }}{% else %}ainda não lida{% endif %}
         {% if a.paginas %} · {{ a.paginas }} pág.{% endif %}{% if a.topico %} · {{ a.topico.nome }}{% endif %}
       </div>
     </div>
     <a class="btn mini {{ 'claro' if n else '' }}" href="{{ url_for('aula_ver', aid=a.id) }}">{{ 'Reler' if n else 'Ler' }}</a>
+    <form method="post" action="{{ url_for('aula_excluir', aid=a.id) }}" class="excluir"
+          onsubmit="return confirm('Excluir a aula “' + {{ a.titulo|tojson|forceescape }} + '” e o histórico de leituras dela?')">
+      <button class="lixo" title="Excluir aula" aria-label="Excluir aula {{ a.titulo }}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </form>
   </div>
   {% else %}
   <p class="mut">Nenhuma aula ainda. Envie o primeiro PDF acima.</p>
@@ -109,4 +128,24 @@
   <p class="mut">Nenhum caderno ainda.</p>
   {% endfor %}
 </section>
+{% endblock %}
+{% block js %}
+<script>
+document.querySelectorAll('.renomear').forEach(i => {
+  let orig = i.value;
+  i.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); i.blur(); }
+    if (e.key === 'Escape') { i.value = orig; i.blur(); }
+  });
+  i.addEventListener('blur', async () => {
+    if (i.value.trim() === orig) { i.value = orig; return; }
+    try {
+      const r = await fetch('/api/aula/' + i.dataset.aula + '/titulo', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({titulo: i.value})});
+      const d = await r.json(); if (!d.ok) throw 0;
+      i.value = orig = d.titulo;
+      i.classList.add('salvo'); setTimeout(() => i.classList.remove('salvo'), 1200);
+    } catch (_) { alert('Não foi possível renomear. Tente de novo.'); i.value = orig; }
+  });
+});
+</script>
 {% endblock %}

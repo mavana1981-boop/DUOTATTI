@@ -267,6 +267,12 @@ init_db()
 # --------------------------------------------------------------------------- #
 # PDF e leitura de gabarito
 # --------------------------------------------------------------------------- #
+def nome_padrao(arquivo):
+    """Nome da aula = nome do arquivo sem a extensão (.pdf, .pdf.pdf...)."""
+    n = re.sub(r"(\.pdf)+$", "", os.path.basename(arquivo or "").strip(), flags=re.I).strip()
+    return (n or "Aula")[:200]
+
+
 def eh_pdf(data):
     return bool(data) and data[:1024].lstrip().startswith(b"%PDF")
 
@@ -631,13 +637,12 @@ def aula_nova(mid):
     m = db.get_or_404(Materia, mid)
     arquivos = [f for f in request.files.getlist("pdfs") if f and f.filename]
     topico_id = request.form.get("topico_id", type=int) or None
-    titulo = request.form.get("titulo", "").strip()
     n = 0
     for f in arquivos:
         data, nome = _ler_upload(f)
         if not data:
             continue
-        t = titulo if (titulo and len(arquivos) == 1) else os.path.splitext(nome)[0]
+        t = nome_padrao(nome)
         db.session.add(Aula(materia_id=m.id, topico_id=topico_id, titulo=t[:200], arquivo_nome=nome[:200],
                             pdf=data, paginas=contar_paginas(data), tamanho=len(data)))
         n += 1
@@ -849,6 +854,16 @@ def api_aula_leitura(aid):
     return jsonify(ok=True, leituras=len(a.leituras),
                    ultima=a.leituras[-1].lida_em.strftime("%d/%m/%Y %H:%M") if a.leituras else None,
                    aulas_lidas=s["aulas_lidas"], aulas=s["aulas"])
+
+
+@app.post("/api/aula/<int:aid>/titulo")
+def api_aula_titulo(aid):
+    """Renomear aula (tela da matéria). Vazio = volta ao nome do arquivo."""
+    a = db.get_or_404(Aula, aid)
+    t = ((request.get_json(silent=True) or {}).get("titulo") or "").strip()
+    a.titulo = t[:200] if t else nome_padrao(a.arquivo_nome)
+    db.session.commit()
+    return jsonify(ok=True, titulo=a.titulo)
 
 
 @app.post("/api/caderno/<int:cid>/assunto")
