@@ -11,10 +11,10 @@
 .seta{flex:none;width:8px;height:8px;border-right:3px solid var(--mut);border-bottom:3px solid var(--mut);transform:rotate(-45deg);transition:transform .15s}
 .pm[open] .seta{transform:rotate(45deg)}
 .pm-aulas{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-.bola{width:26px;height:26px;border-radius:50%;border:3px solid var(--c);background:transparent;cursor:pointer;padding:0;
-  font:900 .7rem Nunito,sans-serif;color:#fff;display:grid;place-items:center;transition:transform .1s,background .15s}
+.bola{width:32px;height:32px;border-radius:50%;border:3px solid var(--c);background:transparent;cursor:pointer;padding:0;
+  font:900 .8rem Nunito,sans-serif;color:var(--c);display:grid;place-items:center;transition:transform .1s,background .15s,color .15s}
 .bola:hover{transform:scale(1.12)}
-.bola.cheia{background:var(--c)}
+.bola.cheia{background:var(--c);color:#fff}
 .bola:focus-visible{outline:3px solid var(--xp);outline-offset:2px}
 .bola.pulso{animation:pulso .35s}
 @keyframes pulso{50%{transform:scale(1.35)}}
@@ -52,7 +52,7 @@
 
 <section class="card">
   <h2>Por matéria</h2>
-  <p class="hint" style="margin-top:-6px">Clique num círculo para marcar a aula como lida. Toque na matéria para ver e definir o assunto das questões.</p>
+  <p class="hint" style="margin-top:-6px">Cada círculo é uma aula: clique quando terminar de ler (fica preenchido). Clicou errado? Clique de novo. Toque na matéria para ver e definir o assunto das questões.</p>
   <div class="pm-cab"><span>Matéria</span><span>Aulas lidas</span><span>Questões</span><span>Acerto</span><span>Último</span></div>
   {% for m, s, pa in materias %}
   <details class="pm" style="--c:{{ m.cor }}">
@@ -60,10 +60,10 @@
       <span class="pm-nome"><i class="seta"></i><b>{{ m.nome }}</b></span>
       <span class="pm-aulas">
         {% for a in m.aulas %}{% set n = a.leituras|length %}
-        <button type="button" class="bola {{ 'cheia' if n }}" data-aula="{{ a.id }}" data-titulo="{{ a.titulo }}" data-n="{{ n }}"
-          title="{{ a.titulo }} — {{ (n ~ 'x lida, última ' ~ (a.leituras[-1].lida_em|dt)) if n else 'não lida' }}"
-          aria-label="{{ a.titulo }}: {{ 'lida ' ~ n ~ ' vez(es)' if n else 'não lida' }}" aria-pressed="{{ 'true' if n else 'false' }}">{{ n if n > 1 else '' }}</button>
-        {% else %}<a class="mut" href="{{ url_for('materia', mid=m.id) }}#aulas" style="font-size:.82rem">enviar aulas</a>{% endfor %}
+        <button type="button" class="bola {{ 'cheia' if n }}" data-aula="{{ a.id }}" data-titulo="{{ a.titulo }}" data-lida="{{ 1 if n else 0 }}"
+          title="Aula {{ loop.index }}: {{ a.titulo }}{{ ' — lida em ' ~ (a.leituras[-1].lida_em|dt) if n }}"
+          aria-label="Aula {{ loop.index }}: {{ a.titulo }}" aria-pressed="{{ 'true' if n else 'false' }}">{{ loop.index }}</button>
+        {% else %}<a class="mut" href="{{ url_for('materia', mid=m.id) }}#aulas" style="font-size:.82rem">nenhuma aula enviada</a>{% endfor %}
         {% if m.aulas %}<small class="mut cont" data-m="{{ m.id }}">{{ s.aulas_lidas }}/{{ s.aulas }}</small>{% endif %}
       </span>
       <span>{{ s.questoes }}</span>
@@ -149,26 +149,23 @@ new Chart(document.getElementById('gSemana'), {data:{labels: SEMANAS.map(s => s.
   scales:{y:{beginAtZero:true, title:{display:true, text:'leituras'}, grid:{color:cor('--line')}},
           y1:{beginAtZero:true, position:'right', title:{display:true, text:'questões'}, grid:{display:false}}, x:{grid:{display:false}}}}});
 
-// círculos de aulas lidas
+// círculos de aulas lidas: clique preenche (lida); clique de novo esvazia
 document.querySelectorAll('.bola').forEach(b => b.addEventListener('click', async e => {
   e.preventDefault(); e.stopPropagation();
-  const n = +b.dataset.n;
-  let acao = 'ler';
-  if (n > 0) {
-    const ler = confirm(`"${b.dataset.titulo}" já foi lida ${n}x.\n\nOK = registrar mais uma leitura\nCancelar = outras opções`);
-    if (!ler) { if (!confirm('Remover a última leitura registrada desta aula?')) return; acao = 'desfazer'; }
-  }
-  b.disabled = true;
+  const lida = b.dataset.lida === '1';
+  const acao = lida ? 'desmarcar' : 'ler';
+  // muda na hora; se o servidor falhar, volta
+  b.classList.toggle('cheia', !lida); b.dataset.lida = lida ? '0' : '1'; b.setAttribute('aria-pressed', !lida);
+  b.classList.remove('pulso'); void b.offsetWidth; b.classList.add('pulso');
   try {
     const r = await fetch('/api/aula/' + b.dataset.aula + '/leitura', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acao})});
     const d = await r.json(); if (!d.ok) throw 0;
-    b.dataset.n = d.leituras; b.classList.toggle('cheia', d.leituras > 0); b.textContent = d.leituras > 1 ? d.leituras : '';
-    b.setAttribute('aria-pressed', d.leituras > 0);
-    b.title = b.dataset.titulo + ' — ' + (d.leituras ? d.leituras + 'x lida, última ' + d.ultima : 'não lida');
     const cont = b.parentElement.querySelector('.cont'); if (cont) cont.textContent = d.aulas_lidas + '/' + d.aulas;
-    b.classList.remove('pulso'); void b.offsetWidth; b.classList.add('pulso');
-  } catch (_) { alert('Não foi possível salvar. Tente de novo.'); }
-  b.disabled = false;
+    b.title = b.title.split(' — ')[0] + (d.leituras ? ' — lida em ' + d.ultima : '');
+  } catch (_) {
+    b.classList.toggle('cheia', lida); b.dataset.lida = lida ? '1' : '0'; b.setAttribute('aria-pressed', lida);
+    alert('Não foi possível salvar. Tente de novo.');
+  }
 }));
 // assunto dos cadernos (salva ao sair do campo)
 document.querySelectorAll('.assunto').forEach(i => {

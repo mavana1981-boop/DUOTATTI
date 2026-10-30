@@ -835,7 +835,10 @@ def api_aula_leitura(aid):
     """Círculo da tela Evolução: acao=ler registra leitura; acao=desfazer remove a última."""
     a = db.get_or_404(Aula, aid)
     acao = (request.get_json(silent=True) or {}).get("acao", "ler")
-    if acao == "desfazer":
+    if acao == "desmarcar":  # círculo volta a ficar vazio
+        for l in list(a.leituras):
+            db.session.delete(l)
+    elif acao == "desfazer":
         if a.leituras:
             db.session.delete(a.leituras[-1])
     else:
