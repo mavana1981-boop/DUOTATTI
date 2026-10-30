@@ -1,0 +1,11 @@
+{# Opções de tópicos de uma matéria: itens do edital + assuntos criados por você #}
+{% macro opcoes(m, sel=None) %}
+{% set ed = m.topicos|rejectattr('personalizado')|list %}
+{% set pe = m.topicos|selectattr('personalizado')|list %}
+<optgroup label="Edital">
+  {% for t in ed %}<option value="{{ t.id }}" {{ 'selected' if t.id == sel }}>{{ t.nome }}</option>{% endfor %}
+</optgroup>
+{% if pe %}<optgroup label="Seus assuntos">
+  {% for t in pe %}<option value="{{ t.id }}" {{ 'selected' if t.id == sel }}>{{ t.nome }}</option>{% endfor %}
+</optgroup>{% endif %}
+{% endmacro %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_topicos.html" import opcoes %}
 {% block titulo %}{{ m.nome }}{% endblock %}
 {% block css %}
 .cab{border-left:8px solid {{ m.cor }};padding-left:12px;margin-bottom:16px}
@@ -44,11 +45,11 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
 </section>
 
 <section class="card">
-  <h2>Tópicos do edital</h2>
+  <h2>Tópicos do edital e seus assuntos</h2>
   <ul class="tops">
-    {% for t in m.topicos %}<li><span class="d {{ 'ok' if t.id in s.topicos_lidos }}"></span>{{ t.nome }}</li>{% endfor %}
+    {% for t in m.topicos %}<li><span class="d {{ 'ok' if t.id in s.topicos_lidos }}"></span><span>{{ t.nome }}{% if t.personalizado %} <span class="tag">assunto</span>{% endif %}</span></li>{% endfor %}
   </ul>
-  <p class="hint">O tópico fica verde quando uma aula ligada a ele é lida.</p>
+  <p class="hint">O tópico fica verde quando uma aula ligada a ele é lida. Os assuntos dados aos cadernos de questões entram aqui automaticamente.</p>
 </section>
 
 <section class="card" id="aulas">
@@ -59,9 +60,11 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
       <label class="f">Arquivos PDF</label>
       <input type="file" name="pdfs" accept="application/pdf,.pdf" multiple required>
       <p class="hint">Pode enviar vários de uma vez — cada PDF vira uma aula com o nome do arquivo (dá para renomear depois).</p>
-      <label class="f">Tópico do edital (opcional)</label>
-      <select name="topico_id"><option value="">—</option>
-        {% for t in m.topicos %}<option value="{{ t.id }}">{{ t.nome }}</option>{% endfor %}</select>
+      <label class="f">Vincular a um tópico ou assunto (opcional)</label>
+      <select name="topico_id"><option value="">—</option>{{ opcoes(m) }}</select>
+      <label class="f">…ou crie um assunto novo</label>
+      <input type="text" name="novo_assunto" placeholder="Ex.: Direitos sociais (arts. 6º a 11)">
+      <p class="hint">O assunto novo fica disponível para as próximas aulas e para os cadernos de questões.</p>
       <div style="margin-top:14px"><button class="btn azul">Enviar</button></div>
     </form>
   </details>
@@ -80,8 +83,7 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
         {% if a.paginas %} · {{ a.paginas }} pág.{% endif %}
       </div>
       <select class="item-edital {{ 'vazio' if not a.topico_id }}" data-aula="{{ a.id }}" aria-label="Item do edital da aula {{ a.titulo }}">
-        <option value="">Item do edital: não definido</option>
-        {% for t in m.topicos %}<option value="{{ t.id }}" {{ 'selected' if t.id == a.topico_id }}>{{ t.nome }}</option>{% endfor %}
+        <option value="">Item do edital / assunto: não definido</option>{{ opcoes(m, a.topico_id) }}
       </select>
     </div>
     <a class="btn mini {{ 'claro' if n else '' }}" href="{{ url_for('aula_ver', aid=a.id) }}">{{ 'Reler' if n else 'Ler' }}</a>

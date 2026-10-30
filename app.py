@@ -69,6 +69,7 @@ class Topico(db.Model):
     materia_id = db.Column(db.Integer, db.ForeignKey("materia.id"), nullable=False)
     nome = db.Column(db.String(200), nullable=False)
     ordem = db.Column(db.Integer, default=0)
+    personalizado = db.Column(db.Boolean, default=False)  # True = assunto criado por você (não veio do edital)
 
 
 class Aula(db.Model):
@@ -226,7 +227,7 @@ def seed():
     db.session.commit()
 
 
-NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)")]
+NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE")]
 
 
 def migrar(conn):
@@ -236,6 +237,28 @@ def migrar(conn):
     for tabela, coluna, tipo in NOVAS_COLUNAS:
         if coluna not in {c["name"] for c in insp.get_columns(tabela)}:
             conn.exec_driver_sql(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
+
+
+def garantir_topico(materia_id, nome):
+    """Devolve o tópico com esse nome na matéria; se não existir, cria como assunto personalizado."""
+    nome = (nome or "").strip()[:200]
+    if not nome:
+        return None
+    for t in Topico.query.filter_by(materia_id=materia_id).all():
+        if t.nome.strip().lower() == nome.lower():
+            return t
+    ultimo = db.session.query(db.func.max(Topico.ordem)).filter_by(materia_id=materia_id).scalar() or 0
+    t = Topico(materia_id=materia_id, nome=nome, ordem=max(ultimo, 999) + 1, personalizado=True)
+    db.session.add(t)
+    db.session.flush()
+    return t
+
+
+def assuntos_para_topicos():
+    """Assuntos de cadernos já cadastrados viram tópicos (para bancos antigos)."""
+    for c in Caderno.query.filter(Caderno.assunto.isnot(None)).all():
+        garantir_topico(c.materia_id, c.assunto)
+    db.session.commit()
 
 
 def init_db():
@@ -253,6 +276,7 @@ def init_db():
                     with db.engine.begin() as conn:
                         migrar(conn)
                 seed()
+                assuntos_para_topicos()
                 return
             except Exception as e:  # outro worker criou primeiro: espera e tenta de novo
                 db.session.rollback()
@@ -637,6 +661,9 @@ def aula_nova(mid):
     m = db.get_or_404(Materia, mid)
     arquivos = [f for f in request.files.getlist("pdfs") if f and f.filename]
     topico_id = request.form.get("topico_id", type=int) or None
+    novo = request.form.get("novo_assunto", "").strip()
+    if novo:
+        topico_id = garantir_topico(m.id, novo).id
     n = 0
     for f in arquivos:
         data, nome = _ler_upload(f)
@@ -736,6 +763,7 @@ def caderno_novo(mid):
                 pdf_gabarito=dg, tem_pdf_gabarito=bool(dg))
     c.gabarito = gab
     db.session.add(c)
+    garantir_topico(m.id, c.assunto)
     db.session.commit()
     if gab:
         flash(f"Caderno criado: {len(gab)} questões lidas do {origem}. Confira o gabarito antes de resolver.", "ok")
@@ -763,6 +791,7 @@ def caderno_gabarito(cid):
         if t:
             c.titulo = t[:200]
         c.assunto = request.form.get("assunto", "").strip()[:200] or None
+        garantir_topico(c.materia_id, c.assunto)
         if not gab:
             flash("Não entendi o gabarito. Use uma linha por questão, ex.: 1-A", "erro")
         else:
@@ -886,6 +915,7 @@ def api_aula_topico(aid):
 def api_caderno_assunto(cid):
     c = db.get_or_404(Caderno, cid)
     c.assunto = ((request.get_json(silent=True) or {}).get("assunto") or "").strip()[:200] or None
+    garantir_topico(c.materia_id, c.assunto)
     db.session.commit()
     return jsonify(ok=True, assunto=c.assunto)
 

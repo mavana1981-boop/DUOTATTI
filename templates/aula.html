@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_topicos.html" import opcoes %}
 {% block titulo %}{{ a.titulo }}{% endblock %}
 {% block css %}
 .lay{display:grid;gap:16px;grid-template-columns:1fr}
@@ -43,8 +44,7 @@
       <form method="post" action="{{ url_for('aula_editar', aid=a.id) }}">
         <label class="f">Título</label><input type="text" name="titulo" value="{{ a.titulo }}">
         <label class="f">Tópico</label>
-        <select name="topico_id"><option value="">—</option>
-          {% for t in m.topicos %}<option value="{{ t.id }}" {{ 'selected' if t.id == a.topico_id }}>{{ t.nome }}</option>{% endfor %}</select>
+        <select name="topico_id"><option value="">—</option>{{ opcoes(m, a.topico_id) }}</select>
         <div style="margin-top:12px"><button class="btn azul mini">Salvar</button></div>
       </form>
       <form method="post" action="{{ url_for('aula_excluir', aid=a.id) }}" style="margin-top:12px"
