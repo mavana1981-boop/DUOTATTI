@@ -7,12 +7,14 @@ import json
 import os
 import random
 import re
+import time as _time
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from flask import (Flask, abort, flash, redirect, render_template, request,
                    send_file, session, url_for)
 from flask_sqlalchemy import SQLAlchemy
+from jinja2 import ChoiceLoader, FileSystemLoader
 from pypdf import PdfReader
 from sqlalchemy.orm import deferred
 from werkzeug.utils import secure_filename
@@ -32,7 +34,11 @@ def hoje():
 # --------------------------------------------------------------------------- #
 # App / banco
 # --------------------------------------------------------------------------- #
-app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"))
+# procura os .html em templates/ e, se não achar, na raiz do projeto
+app.jinja_env.loader = ChoiceLoader([FileSystemLoader(os.path.join(BASE_DIR, "templates")),
+                                     FileSystemLoader(BASE_DIR)])
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "duotatti-dev-key")
 db_url = os.environ.get("DATABASE_URL", "sqlite:///duotatti.db")
 if db_url.startswith("postgres://"):
@@ -219,9 +225,27 @@ def seed():
     db.session.commit()
 
 
-with app.app_context():
-    db.create_all()
-    seed()
+def init_db():
+    """Cria tabelas e matérias. Seguro com vários workers subindo ao mesmo tempo."""
+    with app.app_context():
+        for tentativa in range(6):
+            try:
+                if db.engine.dialect.name == "postgresql":
+                    with db.engine.begin() as conn:
+                        conn.exec_driver_sql("SELECT pg_advisory_xact_lock(424242)")
+                        db.metadata.create_all(bind=conn, checkfirst=True)
+                else:
+                    db.create_all()
+                seed()
+                return
+            except Exception as e:  # outro worker criou primeiro: espera e tenta de novo
+                db.session.rollback()
+                app.logger.warning("init_db tentativa %s: %s", tentativa + 1, e.__class__.__name__)
+                _time.sleep(1 + tentativa)
+        app.logger.error("init_db não concluiu; tentando seguir assim mesmo")
+
+
+init_db()
 
 
 # --------------------------------------------------------------------------- #
