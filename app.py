@@ -866,6 +866,22 @@ def api_aula_titulo(aid):
     return jsonify(ok=True, titulo=a.titulo)
 
 
+@app.post("/api/aula/<int:aid>/topico")
+def api_aula_topico(aid):
+    """Item do edital da aula (tela da matéria). Vazio = sem item."""
+    a = db.get_or_404(Aula, aid)
+    tid = (request.get_json(silent=True) or {}).get("topico_id")
+    try:
+        tid = int(tid) if tid not in (None, "") else None
+    except (TypeError, ValueError):
+        return jsonify(ok=False), 400
+    if tid is not None and not any(t.id == tid for t in a.materia.topicos):
+        return jsonify(ok=False), 400
+    a.topico_id = tid
+    db.session.commit()
+    return jsonify(ok=True, topico_id=tid)
+
+
 @app.post("/api/caderno/<int:cid>/assunto")
 def api_caderno_assunto(cid):
     c = db.get_or_404(Caderno, cid)

@@ -14,6 +14,10 @@ input[type=text].renomear.salvo{border-color:var(--ok)}
 .lapis{flex:none;width:16px;height:16px;color:var(--mut);opacity:.6}
 .nome-ed:focus-within .lapis{display:none}
 .excluir{margin:0}
+select.item-edital{width:auto;max-width:100%;margin-top:4px;padding:3px 26px 3px 8px;font-size:.8rem;font-weight:700;border-radius:999px;
+  border:2px solid color-mix(in srgb,{{ m.cor }} 45%,transparent);background-color:color-mix(in srgb,{{ m.cor }} 10%,transparent);color:var(--ink);cursor:pointer}
+select.item-edital.vazio{border-style:dashed;border-color:var(--line);background-color:transparent;color:var(--mut)}
+select.item-edital.salvo{border-color:var(--ok);border-style:solid}
 .lixo{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;border:2px solid transparent;background:transparent;color:var(--mut);cursor:pointer;padding:0}
 .lixo svg{width:18px;height:18px}
 .lixo:hover,.lixo:focus-visible{color:var(--err);border-color:color-mix(in srgb,var(--err) 40%,transparent);background:color-mix(in srgb,var(--err) 8%,transparent)}
@@ -73,8 +77,12 @@ input[type=text].renomear.salvo{border-color:var(--ok)}
       </div>
       <div class="det">
         {% if n %}última leitura {{ a.leituras[-1].lida_em|dt }}{% else %}ainda não lida{% endif %}
-        {% if a.paginas %} · {{ a.paginas }} pág.{% endif %}{% if a.topico %} · {{ a.topico.nome }}{% endif %}
+        {% if a.paginas %} · {{ a.paginas }} pág.{% endif %}
       </div>
+      <select class="item-edital {{ 'vazio' if not a.topico_id }}" data-aula="{{ a.id }}" aria-label="Item do edital da aula {{ a.titulo }}">
+        <option value="">Item do edital: não definido</option>
+        {% for t in m.topicos %}<option value="{{ t.id }}" {{ 'selected' if t.id == a.topico_id }}>{{ t.nome }}</option>{% endfor %}
+      </select>
     </div>
     <a class="btn mini {{ 'claro' if n else '' }}" href="{{ url_for('aula_ver', aid=a.id) }}">{{ 'Reler' if n else 'Ler' }}</a>
     <form method="post" action="{{ url_for('aula_excluir', aid=a.id) }}" class="excluir"
@@ -131,6 +139,17 @@ input[type=text].renomear.salvo{border-color:var(--ok)}
 {% endblock %}
 {% block js %}
 <script>
+document.querySelectorAll('.item-edital').forEach(sel => {
+  let orig = sel.value;
+  sel.addEventListener('change', async () => {
+    try {
+      const r = await fetch('/api/aula/' + sel.dataset.aula + '/topico', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({topico_id: sel.value})});
+      if (!(await r.json()).ok) throw 0;
+      orig = sel.value; sel.classList.toggle('vazio', !sel.value);
+      sel.classList.add('salvo'); setTimeout(() => sel.classList.remove('salvo'), 1200);
+    } catch (_) { alert('Não foi possível salvar o item do edital.'); sel.value = orig; }
+  });
+});
 document.querySelectorAll('.renomear').forEach(i => {
   let orig = i.value;
   i.addEventListener('keydown', e => {
