@@ -294,27 +294,43 @@ def definir_topico_caderno(c, topico_id=None, novo=None):
     return t
 
 
+def fundir_topico(origem, destino):
+    """Passa aulas e cadernos do tópico 'origem' para 'destino' e apaga 'origem'."""
+    Aula.query.filter_by(topico_id=origem.id).update({"topico_id": destino.id}, synchronize_session=False)
+    Caderno.query.filter_by(topico_id=origem.id).update({"topico_id": destino.id}, synchronize_session=False)
+    db.session.delete(origem)
+
+
 def atualizar_topicos_edital():
-    """Deixa os itens do edital com o assunto no nome, sem perder vínculos das aulas."""
+    """Deixa os itens do edital com o assunto no nome, fundindo duplicados sem perder vínculos."""
     for m in Materia.query.all():
         alvo = next((x[4] for x in MATERIAS if x[0] == m.nome), None)
         if not alvo:
             continue
-        existentes = [t for t in m.topicos if not t.personalizado]
-        nomes = {t.nome for t in existentes}
-        for t in existentes:
-            novo = RENOMEAR_TOPICOS.get(t.nome)
-            if novo and novo not in nomes:
-                nomes.discard(t.nome)
-                t.nome = novo
-                nomes.add(novo)
-        por_nome = {t.nome: t for t in existentes}
+        edital = [t for t in Topico.query.filter_by(materia_id=m.id).order_by(Topico.id).all()
+                  if not t.personalizado]
+        por_nome = {}
+        # primeiro os que já têm o nome novo, para eles ficarem como destino
+        edital.sort(key=lambda t: (t.nome not in alvo, t.id))
+        for t in edital:
+            nome = RENOMEAR_TOPICOS.get(t.nome, t.nome)
+            if nome in por_nome:
+                fundir_topico(t, por_nome[nome])
+            else:
+                t.nome = nome
+                por_nome[nome] = t
+        db.session.flush()
         for i, nome in enumerate(alvo):
             t = por_nome.get(nome)
             if t is None:
                 t = Topico(materia_id=m.id, nome=nome, personalizado=False)
                 db.session.add(t)
             t.ordem = i
+    db.session.flush()
+    for c in Caderno.query.filter(Caderno.topico_id.isnot(None)).all():  # assunto acompanha o nome do tópico
+        t = db.session.get(Topico, c.topico_id)
+        if t and c.assunto != t.nome:
+            c.assunto = t.nome
     db.session.commit()
 
 
@@ -342,28 +358,41 @@ def assuntos_para_topicos():
     db.session.commit()
 
 
+def _preparar_banco():
+    if db.engine.dialect.name == "postgresql":
+        with db.engine.begin() as conn:
+            db.metadata.create_all(bind=conn, checkfirst=True)
+            migrar(conn)
+    else:
+        db.create_all()
+        with db.engine.begin() as conn:
+            migrar(conn)
+    seed()
+    atualizar_topicos_edital()
+    assuntos_para_topicos()
+
+
 def init_db():
-    """Cria tabelas e matérias. Seguro com vários workers subindo ao mesmo tempo."""
+    """Cria/atualiza tabelas e tópicos. Em Postgres roda com trava: um processo por vez."""
     with app.app_context():
         for tentativa in range(6):
+            trava = None
             try:
                 if db.engine.dialect.name == "postgresql":
-                    with db.engine.begin() as conn:
-                        conn.exec_driver_sql("SELECT pg_advisory_xact_lock(424242)")
-                        db.metadata.create_all(bind=conn, checkfirst=True)
-                        migrar(conn)
-                else:
-                    db.create_all()
-                    with db.engine.begin() as conn:
-                        migrar(conn)
-                seed()
-                atualizar_topicos_edital()
-                assuntos_para_topicos()
+                    trava = db.engine.connect()
+                    trava.exec_driver_sql("SELECT pg_advisory_lock(424242)")
+                _preparar_banco()
                 return
-            except Exception as e:  # outro worker criou primeiro: espera e tenta de novo
+            except Exception as e:
                 db.session.rollback()
-                app.logger.warning("init_db tentativa %s: %s", tentativa + 1, e.__class__.__name__)
+                app.logger.warning("init_db tentativa %s: %s: %s", tentativa + 1, e.__class__.__name__, e)
                 _time.sleep(1 + tentativa)
+            finally:
+                if trava is not None:
+                    try:
+                        trava.exec_driver_sql("SELECT pg_advisory_unlock(424242)")
+                    finally:
+                        trava.close()
         app.logger.error("init_db não concluiu; tentando seguir assim mesmo")
 
 
