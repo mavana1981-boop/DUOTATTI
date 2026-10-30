@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block titulo %}{{ m.nome }}{% endblock %}
+{% block css %}
+.cab{border-left:8px solid {{ m.cor }};padding-left:12px;margin-bottom:16px}
+.item{display:flex;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.item:last-child{border-bottom:0}
+.item .nome{font-weight:800;line-height:1.25}
+.item .det{color:var(--mut);font-size:.82rem}
+.num{flex:none;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;font-weight:900;background:var(--soft);color:var(--mut)}
+.num.lida{background:{{ m.cor }};color:#fff}
+.tops{list-style:none;margin:0;padding:0;columns:2 260px}
+.tops li{padding:4px 0;break-inside:avoid;display:flex;gap:8px;font-size:.92rem}
+.tops .d{flex:none;width:12px;height:12px;border-radius:50%;margin-top:5px;background:var(--soft);border:2px solid var(--line)}
+.tops .d.ok{background:var(--ok);border-color:var(--ok)}
+{% endblock %}
+{% block conteudo %}
+<div class="cab">
+  <a href="{{ url_for('index') }}" class="mut" style="text-decoration:none;font-weight:800">‹ Trilha</a>
+  <h1>{{ m.nome }}</h1>
+  <p class="sub" style="margin:0">{{ m.info }}{% if m.questoes_prova %} · {{ m.questoes_prova }} questões na prova{% endif %}</p>
+</div>
+
+<section class="grid g4" style="margin-bottom:16px">
+  <div class="stat"><small>Aulas lidas</small><b>{{ s.aulas_lidas }}/{{ s.aulas }}</b></div>
+  <div class="stat"><small>Leituras totais</small><b>{{ s.leituras }}</b></div>
+  <div class="stat"><small>Questões feitas</small><b>{{ s.questoes }}</b></div>
+  <div class="stat"><small>Acerto geral</small>
+    <b style="color:{{ 'var(--mut)' if s.acerto is none else ('var(--ok)' if s.acerto >= meta_acerto else 'var(--err)') }}">{{ s.acerto|pct }}</b></div>
+</section>
+
+<section class="card">
+  <h2>Tópicos do edital</h2>
+  <ul class="tops">
+    {% for t in m.topicos %}<li><span class="d {{ 'ok' if t.id in s.topicos_lidos }}"></span>{{ t.nome }}</li>{% endfor %}
+  </ul>
+  <p class="hint">O tópico fica verde quando uma aula ligada a ele é lida.</p>
+</section>
+
+<section class="card" id="aulas">
+  <div class="row"><h2 style="margin:0">Aulas em PDF</h2><span class="tag right">{{ s.aulas }}</span></div>
+  <details class="box" {{ 'open' if not m.aulas }}>
+    <summary>+ Enviar aulas (PDF)</summary>
+    <form method="post" action="{{ url_for('aula_nova', mid=m.id) }}" enctype="multipart/form-data">
+      <label class="f">Arquivos PDF</label>
+      <input type="file" name="pdfs" accept="application/pdf,.pdf" multiple required>
+      <p class="hint">Pode enviar vários de uma vez — cada PDF vira uma aula.</p>
+      <label class="f">Título (opcional, só para 1 arquivo)</label>
+      <input type="text" name="titulo" placeholder="Ex.: Aula 03 — Crase">
+      <label class="f">Tópico do edital (opcional)</label>
+      <select name="topico_id"><option value="">—</option>
+        {% for t in m.topicos %}<option value="{{ t.id }}">{{ t.nome }}</option>{% endfor %}</select>
+      <div style="margin-top:14px"><button class="btn azul">Enviar</button></div>
+    </form>
+  </details>
+  {% for a in m.aulas %}
+  {% set n = a.leituras|length %}
+  <div class="item">
+    <div class="num {{ 'lida' if n }}">{{ n }}x</div>
+    <div style="flex:1;min-width:0">
+      <div class="nome">{{ a.titulo }}</div>
+      <div class="det">
+        {% if n %}última leitura {{ a.leituras[-1].lida_em|dt }}{% else %}ainda não lida{% endif %}
+        {% if a.paginas %} · {{ a.paginas }} pág.{% endif %}{% if a.topico %} · {{ a.topico.nome }}{% endif %}
+      </div>
+    </div>
+    <a class="btn mini {{ 'claro' if n else '' }}" href="{{ url_for('aula_ver', aid=a.id) }}">{{ 'Reler' if n else 'Ler' }}</a>
+  </div>
+  {% else %}
+  <p class="mut">Nenhuma aula ainda. Envie o primeiro PDF acima.</p>
+  {% endfor %}
+</section>
+
+<section class="card" id="questoes">
+  <div class="row"><h2 style="margin:0">Questões</h2><span class="tag right">{{ m.cadernos|length }} caderno{{ '' if m.cadernos|length == 1 else 's' }}</span></div>
+  <details class="box" {{ 'open' if not m.cadernos }}>
+    <summary>+ Novo caderno de questões</summary>
+    <form method="post" action="{{ url_for('caderno_novo', mid=m.id) }}" enctype="multipart/form-data">
+      <label class="f">PDF das questões</label>
+      <input type="file" name="pdf_questoes" accept="application/pdf,.pdf" required>
+      <label class="f">PDF do gabarito (opcional)</label>
+      <input type="file" name="pdf_gabarito" accept="application/pdf,.pdf">
+      <p class="hint">Se o gabarito estiver no fim do PDF das questões, pode deixar este campo vazio.</p>
+      <label class="f">…ou cole o gabarito (opcional)</label>
+      <textarea name="gabarito_texto" rows="3" placeholder="1-A 2-C 3-E …  ou  ACEBD…"></textarea>
+      <label class="f">Título (opcional)</label>
+      <input type="text" name="titulo" placeholder="Ex.: VUNESP 2023 — Crase">
+      <div style="margin-top:14px"><button class="btn azul">Criar caderno</button></div>
+    </form>
+  </details>
+  {% for c in m.cadernos %}
+  {% set ts = c.tentativas %}
+  <div class="item">
+    <div class="num {{ 'lida' if ts }}">{{ c.total }}</div>
+    <div style="flex:1;min-width:0">
+      <div class="nome">{{ c.titulo }}</div>
+      <div class="det">{{ c.total }} questões ·
+        {% if ts %}{{ ts|length }} tentativa{{ '' if ts|length == 1 else 's' }} · última
+          <b style="color:{{ 'var(--ok)' if ts[-1].percentual >= meta_acerto else 'var(--err)' }}">{{ ts[-1].percentual|pct }}</b>
+          · melhor {{ (ts|map(attribute='percentual')|max)|pct }}
+        {% else %}nunca resolvido{% endif %}
+      </div>
+    </div>
+    <a class="btn mini {{ 'claro' if ts else 'ouro' }}" href="{{ url_for('caderno_resolver', cid=c.id) }}">{{ 'Refazer' if ts else 'Resolver' }}</a>
+  </div>
+  {% else %}
+  <p class="mut">Nenhum caderno ainda.</p>
+  {% endfor %}
+</section>
+{% endblock %}

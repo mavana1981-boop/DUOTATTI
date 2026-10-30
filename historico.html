@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block titulo %}Evolução{% endblock %}
+{% block conteudo %}
+<h1>Sua evolução</h1>
+<p class="sub">Acerto por bateria de questões, ritmo semanal e desempenho por matéria.</p>
+
+<section class="card">
+  <div class="row"><h2 style="margin:0">Acerto por bateria</h2>
+    <select id="filtro" class="right" style="width:auto">
+      <option value="">Todas as matérias</option>
+      {% for m, s in materias %}{% if s.tentativas %}<option>{{ m.nome }}</option>{% endif %}{% endfor %}
+    </select></div>
+  {% if pontos %}
+  <div style="position:relative;height:280px;margin-top:10px"><canvas id="gAcerto"></canvas></div>
+  {% else %}<p class="mut">Resolva o primeiro caderno para ver o gráfico.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Últimas 12 semanas</h2>
+  <div style="position:relative;height:240px"><canvas id="gSemana"></canvas></div>
+</section>
+
+<section class="card" style="overflow-x:auto">
+  <h2>Por matéria</h2>
+  <table>
+    <tr><th>Matéria</th><th>Aulas lidas</th><th>Leituras</th><th>Questões</th><th>Acerto</th><th>Último</th></tr>
+    {% for m, s in materias %}
+    <tr>
+      <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{{ m.cor }};margin-right:6px"></span><a href="{{ url_for('materia', mid=m.id) }}">{{ m.nome }}</a></td>
+      <td>{{ s.aulas_lidas }}/{{ s.aulas }}</td><td>{{ s.leituras }}</td><td>{{ s.questoes }}</td>
+      <td>{% if s.acerto is not none %}<span class="tag {{ 'ok' if s.acerto >= meta_acerto else 'err' }}">{{ s.acerto|pct }}</span>{% else %}—{% endif %}</td>
+      <td>{{ s.ultimo|pct }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+
+<section class="card">
+  <h2>Atividade recente</h2>
+  {% for tipo, quando, obj in eventos %}
+  <div class="row" style="padding:8px 0;border-bottom:1px solid var(--line)">
+    {% if tipo == 'leitura' %}
+      <span class="tag" style="background:color-mix(in srgb,var(--blue) 15%,transparent);color:var(--blue)">{{ obj.numero }}ª leitura</span>
+      <a href="{{ url_for('aula_ver', aid=obj.aula.id) }}">{{ obj.aula.titulo }}</a>
+      <span class="mut">· {{ obj.aula.materia.nome }}</span>
+    {% else %}
+      <span class="tag {{ 'ok' if obj.percentual >= meta_acerto else 'err' }}">{{ obj.percentual|pct }}</span>
+      <a href="{{ url_for('tentativa_ver', tid=obj.id) }}">{{ obj.caderno.titulo }}</a>
+      <span class="mut">· {{ obj.acertos }}/{{ obj.respondidas }}</span>
+    {% endif %}
+    <span class="right mut" style="font-size:.85rem">{{ quando|dt }}</span>
+  </div>
+  {% else %}<p class="mut">Nada por aqui ainda.</p>{% endfor %}
+</section>
+{% endblock %}
+{% block js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+const PONTOS = {{ pontos|tojson }}, SEMANAS = {{ semanas|tojson }}, META = {{ meta_acerto }};
+const css = getComputedStyle(document.documentElement), cor = v => css.getPropertyValue(v).trim();
+Chart.defaults.font.family = 'Nunito, system-ui, sans-serif';
+Chart.defaults.font.weight = 700;
+Chart.defaults.color = cor('--mut');
+let gA = null;
+function desenhaAcerto(f){
+  const el = document.getElementById('gAcerto'); if(!el) return;
+  const pts = PONTOS.filter(p => !f || p.m === f);
+  if(gA) gA.destroy();
+  gA = new Chart(el, {type:'line', data:{labels: pts.map(p => p.d), datasets:[
+    {label:'Acerto (%)', data: pts.map(p => p.p), borderColor: cor('--ok'), backgroundColor: pts.map(p => p.cor),
+     pointRadius:5, pointHoverRadius:7, borderWidth:3, tension:.25},
+    {label:'Meta', data: pts.map(() => META), borderColor: cor('--xp'), borderDash:[6,5], borderWidth:2, pointRadius:0}
+  ]}, options:{responsive:true, maintainAspectRatio:false, interaction:{mode:'index', intersect:false},
+    scales:{y:{min:0, max:100, ticks:{callback:v => v + '%'}, grid:{color:cor('--line')}}, x:{grid:{display:false}}},
+    plugins:{tooltip:{callbacks:{title:i => pts[i[0].dataIndex].m + ' — ' + pts[i[0].dataIndex].c,
+      afterTitle:i => pts[i[0].dataIndex].d + ' · ' + pts[i[0].dataIndex].q + ' questões'}}}}});
+}
+desenhaAcerto('');
+document.getElementById('filtro').addEventListener('change', e => desenhaAcerto(e.target.value));
+new Chart(document.getElementById('gSemana'), {data:{labels: SEMANAS.map(s => s.rot), datasets:[
+  {type:'bar', label:'Leituras', data: SEMANAS.map(s => s.leituras), backgroundColor: cor('--blue'), borderRadius:6, yAxisID:'y'},
+  {type:'bar', label:'Questões', data: SEMANAS.map(s => s.questoes), backgroundColor: cor('--ok'), borderRadius:6, yAxisID:'y1'}
+]}, options:{responsive:true, maintainAspectRatio:false,
+  scales:{y:{beginAtZero:true, title:{display:true, text:'leituras'}, grid:{color:cor('--line')}},
+          y1:{beginAtZero:true, position:'right', title:{display:true, text:'questões'}, grid:{display:false}}, x:{grid:{display:false}}}}});
+</script>
+{% endblock %}

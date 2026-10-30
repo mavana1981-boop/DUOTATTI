@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% from "_tatti.html" import tatti %}
+{% block titulo %}Entrar{% endblock %}
+{% block conteudo %}
+<form class="card" method="post" style="max-width:380px;margin:30px auto;text-align:center">
+  <div style="display:flex;justify-content:center">{{ tatti('neutro', 130) }}</div>
+  <h1>DUOTATTI</h1>
+  <p class="sub">Digite a senha para continuar.</p>
+  <input type="password" name="senha" autofocus required autocomplete="current-password">
+  <div style="margin-top:14px"><button class="btn cheio">Entrar</button></div>
+</form>
+{% endblock %}

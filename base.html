@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2fb36d">
+<title>{% block titulo %}DUOTATTI{% endblock %} · DUOTATTI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1d2433;--mut:#6b7486;--line:#e3e7ee;--soft:#eef1f5;
+--ok:#2fb36d;--ok2:#22894f;--xp:#ffb020;--xp2:#d48a00;--err:#e5484d;--err2:#b3262b;--blue:#3d8bfd;--blue2:#2563c9}
+@media (prefers-color-scheme:dark){:root{--bg:#121722;--card:#1b2230;--ink:#eef1f7;--mut:#99a3b6;--line:#2b3446;--soft:#232c3d}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:500 16px/1.45 Nunito,system-ui,sans-serif;padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+a{color:var(--blue)}
+.top{position:sticky;top:0;z-index:10;background:var(--card);border-bottom:2px solid var(--line);padding:10px 16px;padding-top:calc(10px + env(safe-area-inset-top))}
+.top-in{max-width:980px;margin:0 auto;display:flex;align-items:center;gap:14px}
+.logo{font-weight:900;font-size:1.35rem;letter-spacing:.02em;color:var(--ok);text-decoration:none}
+.logo span{color:var(--xp)}
+.chips{margin-left:auto;display:flex;gap:10px;font-weight:800;font-size:.95rem}
+.chip{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;background:var(--soft)}
+.chip svg{width:18px;height:18px}
+nav.desk{display:none;gap:4px}
+nav.desk a,nav.bottom a{text-decoration:none;color:var(--mut);font-weight:800;padding:8px 12px;border-radius:12px}
+nav.desk a.on,nav.bottom a.on{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+nav.bottom{position:fixed;bottom:0;left:0;right:0;z-index:10;background:var(--card);border-top:2px solid var(--line);display:flex;justify-content:space-around;padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
+nav.bottom a{display:flex;flex-direction:column;align-items:center;font-size:.75rem;gap:2px;flex:1}
+nav.bottom svg{width:24px;height:24px}
+@media (min-width:760px){nav.desk{display:flex}nav.bottom{display:none}body{padding-bottom:30px}}
+main{max-width:980px;margin:0 auto;padding:18px 16px}
+h1{font-size:1.6rem;font-weight:900;margin:0 0 4px;line-height:1.15}
+h2{font-size:1.15rem;font-weight:900;margin:0 0 10px}
+.sub{color:var(--mut);margin:0 0 16px}
+.card{background:var(--card);border:2px solid var(--line);border-radius:18px;padding:16px;margin-bottom:16px}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+.stat{background:var(--card);border:2px solid var(--line);border-radius:16px;padding:12px 14px}
+.stat b{display:block;font-size:1.7rem;font-weight:900;line-height:1.1}
+.stat small{color:var(--mut);font-weight:700}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font:inherit;font-weight:900;letter-spacing:.03em;text-transform:uppercase;font-size:.9rem;
+padding:12px 18px;border-radius:14px;border:0;cursor:pointer;text-decoration:none;color:#fff;background:var(--ok);box-shadow:0 4px 0 var(--ok2);transition:transform .05s}
+.btn:active{transform:translateY(3px);box-shadow:0 1px 0 var(--ok2)}
+.btn.azul{background:var(--blue);box-shadow:0 4px 0 var(--blue2)}
+.btn.ouro{background:var(--xp);box-shadow:0 4px 0 var(--xp2);color:#3a2600}
+.btn.vermelho{background:var(--err);box-shadow:0 4px 0 var(--err2)}
+.btn.claro{background:var(--card);color:var(--ink);border:2px solid var(--line);box-shadow:0 4px 0 var(--line)}
+.btn.mini{padding:7px 12px;font-size:.75rem;border-radius:11px}
+.btn.cheio{width:100%}
+.bar{height:14px;background:var(--soft);border-radius:999px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ok);border-radius:999px;transition:width .4s}
+.bar.ouro i{background:var(--xp)}.bar.azul i{background:var(--blue)}.bar.vermelho i{background:var(--err)}
+.flash{max-width:980px;margin:12px auto 0;padding:0 16px}
+.flash div{padding:12px 14px;border-radius:14px;font-weight:800;margin-bottom:8px;border:2px solid}
+.flash .ok{background:color-mix(in srgb,var(--ok) 12%,var(--card));border-color:var(--ok);color:var(--ink)}
+.flash .erro{background:color-mix(in srgb,var(--err) 12%,var(--card));border-color:var(--err)}
+.flash .info{background:var(--card);border-color:var(--line)}
+input[type=text],input[type=number],input[type=date],input[type=password],select,textarea{width:100%;font:inherit;padding:11px 12px;border-radius:12px;border:2px solid var(--line);background:var(--bg);color:var(--ink)}
+input[type=file]{font:inherit;width:100%;padding:10px;border:2px dashed var(--line);border-radius:12px;background:var(--bg)}
+label.f{display:block;font-weight:800;margin:10px 0 4px;font-size:.9rem}
+.hint{color:var(--mut);font-size:.82rem;margin-top:4px}
+details.box{border:2px solid var(--line);border-radius:14px;padding:0 14px;margin:10px 0;background:var(--bg)}
+details.box summary{cursor:pointer;font-weight:900;padding:12px 0;list-style:none}
+details.box summary::-webkit-details-marker{display:none}
+details.box[open]{padding-bottom:14px}
+table{width:100%;border-collapse:collapse;font-size:.92rem}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line)}
+th{color:var(--mut);font-weight:800;font-size:.8rem;text-transform:uppercase}
+.tag{display:inline-block;font-size:.75rem;font-weight:800;padding:2px 9px;border-radius:999px;background:var(--soft);color:var(--mut)}
+.tag.ok{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok2)}
+.tag.err{background:color-mix(in srgb,var(--err) 14%,transparent);color:var(--err)}
+.tag.xp{background:color-mix(in srgb,var(--xp) 20%,transparent);color:var(--xp2)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.mut{color:var(--mut)}
+.right{margin-left:auto}
+.pdf{width:100%;height:72vh;border:2px solid var(--line);border-radius:14px;background:#fff}
+@media (max-width:640px){.pdf{height:60vh}}
+/* Tatti */
+.tatti{display:block;overflow:visible}
+.tatti-radiante .tatti-corpo,.tatti-feliz .tatti-corpo{animation:pula 1.6s ease-in-out infinite;transform-origin:100px 180px}
+.tatti-bravo .tatti-corpo{animation:bufa 2.2s ease-in-out infinite;transform-origin:100px 180px}
+.tatti-furioso .tatti-corpo{animation:treme .35s linear infinite;transform-origin:100px 180px}
+.tatti-vapor{animation:vapor 1s ease-in-out infinite alternate}
+.tatti-brilho{animation:brilha 1.2s ease-in-out infinite alternate}
+@keyframes pula{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px) scale(1.02,.98)}}
+@keyframes bufa{0%,100%{transform:scale(1)}50%{transform:scale(1.03,.97)}}
+@keyframes treme{0%{transform:translateX(-2px) rotate(-1deg)}50%{transform:translateX(2px) rotate(1deg)}100%{transform:translateX(-2px) rotate(-1deg)}}
+@keyframes vapor{from{opacity:.3;transform:translateY(2px)}to{opacity:.9;transform:translateY(-4px)}}
+@keyframes brilha{from{opacity:.4}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){.tatti *{animation:none!important}}
+.balao{position:relative;background:var(--card);border:2px solid var(--line);border-radius:18px;padding:14px 16px}
+.balao:before{content:"";position:absolute;left:-12px;top:30px;border:10px solid transparent;border-right-color:var(--line)}
+.balao:after{content:"";position:absolute;left:-8px;top:31px;border:9px solid transparent;border-right-color:var(--card)}
+@media (max-width:560px){.balao:before,.balao:after{display:none}}
+{% block css %}{% endblock %}
+</style>
+</head>
+<body>
+{% set ep = request.endpoint or '' %}
+<header class="top"><div class="top-in">
+  <a class="logo" href="{{ url_for('index') }}">DUO<span>TATTI</span></a>
+  <nav class="desk">
+    <a href="{{ url_for('index') }}" class="{{ 'on' if ep in ('index','materia','aula_ver','caderno_resolver','tentativa_ver','caderno_gabarito') }}">Aprender</a>
+    <a href="{{ url_for('historico') }}" class="{{ 'on' if ep=='historico' }}">Evolução</a>
+    <a href="{{ url_for('metas') }}" class="{{ 'on' if ep=='metas' }}">Metas</a>
+  </nav>
+  <div class="chips">
+    {% if dias_prova is not none %}<span class="chip" title="Dias para a prova">
+      <svg viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>{{ dias_prova }}</span>{% endif %}
+  </div>
+</div></header>
+
+{% with msgs = get_flashed_messages(with_categories=true) %}{% if msgs %}
+<div class="flash">{% for cat, m in msgs %}<div class="{{ cat }}" role="status">{{ m }}</div>{% endfor %}</div>
+{% endif %}{% endwith %}
+
+<main>{% block conteudo %}{% endblock %}</main>
+
+<nav class="bottom" aria-label="Navegação">
+  <a href="{{ url_for('index') }}" class="{{ 'on' if ep in ('index','materia','aula_ver','caderno_resolver','tentativa_ver','caderno_gabarito') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Aprender</a>
+  <a href="{{ url_for('historico') }}" class="{{ 'on' if ep=='historico' }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Evolução</a>
+  <a href="{{ url_for('metas') }}" class="{{ 'on' if ep=='metas' }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>Metas</a>
+</nav>
+{% block js %}{% endblock %}
+</body>
+</html>

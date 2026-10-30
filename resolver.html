@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block titulo %}{{ c.titulo }}{% endblock %}
+{% block css %}
+.lay{display:grid;gap:16px;grid-template-columns:1fr}
+@media (min-width:900px){.lay{grid-template-columns:1fr 340px}.cartao{position:sticky;top:76px;max-height:calc(100vh - 96px);overflow:auto}}
+.q{display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid var(--line)}
+.q b{width:34px;flex:none;text-align:right;margin-right:4px}
+.q label{flex:1}
+.q input{position:absolute;opacity:0;pointer-events:none}
+.q span{display:grid;place-items:center;height:36px;border-radius:10px;border:2px solid var(--line);font-weight:900;cursor:pointer;user-select:none;background:var(--card)}
+.q input:checked + span{background:var(--blue);border-color:var(--blue2);color:#fff}
+.q input:focus-visible + span{outline:3px solid var(--xp)}
+{% endblock %}
+{% block conteudo %}
+<a href="{{ url_for('materia', mid=m.id) }}#questoes" class="mut" style="text-decoration:none;font-weight:800">‹ {{ m.nome }}</a>
+<h1>{{ c.titulo }}</h1>
+<p class="sub">{{ gab|length }} questões · meta {{ meta_acerto|pct }} · questões em branco não contam no percentual</p>
+
+<div class="lay">
+  <div>
+    <iframe class="pdf" src="{{ url_for('caderno_pdf', cid=c.id, tipo='questoes') }}#view=FitH" title="PDF das questões"></iframe>
+    <p class="hint"><a href="{{ url_for('caderno_pdf', cid=c.id, tipo='questoes') }}" target="_blank" rel="noopener">Abrir as questões em nova aba</a>
+      · <a href="{{ url_for('caderno_gabarito', cid=c.id) }}">Editar gabarito</a></p>
+    {% if c.tentativas %}
+    <div class="card">
+      <h2>Tentativas anteriores</h2>
+      <table><tr><th>Data</th><th>Acertos</th><th>%</th><th></th></tr>
+        {% for t in c.tentativas|reverse %}
+        <tr><td>{{ t.feita_em|dt }}</td><td>{{ t.acertos }}/{{ t.respondidas }}</td>
+          <td><span class="tag {{ 'ok' if t.percentual >= meta_acerto else 'err' }}">{{ t.percentual|pct }}</span></td>
+          <td><a href="{{ url_for('tentativa_ver', tid=t.id) }}">ver</a></td></tr>
+        {% endfor %}
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+  <form class="card cartao" method="post" id="cartao">
+    <div class="row"><h2 style="margin:0">Cartão-resposta</h2><span class="tag right" id="cont">0/{{ gab|length }}</span></div>
+    <div style="margin:10px 0">
+      {% for n in gab %}
+      <div class="q"><b>{{ n }}</b>
+        {% for l in letras %}<label><input type="radio" name="q{{ n }}" value="{{ l }}"><span>{{ l }}</span></label>{% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+    <button class="btn ouro cheio">Corrigir</button>
+  </form>
+</div>
+{% endblock %}
+{% block js %}
+<script>
+(function(){
+  const f=document.getElementById('cartao'),c=document.getElementById('cont'),tot={{ gab|length }};
+  const conta=()=>new Set([...f.querySelectorAll('input:checked')].map(i=>i.name)).size;
+  // clique de novo na mesma letra desmarca
+  f.addEventListener('click',e=>{const s=e.target.closest('label');if(!s)return;const i=s.querySelector('input');
+    if(i.checked&&i.dataset.was==='1'){e.preventDefault();i.checked=false;i.dataset.was='0';c.textContent=conta()+'/'+tot;return}
+    f.querySelectorAll('input[name="'+i.name+'"]').forEach(x=>x.dataset.was='0');setTimeout(()=>{i.dataset.was='1';c.textContent=conta()+'/'+tot},0)});
+  f.addEventListener('submit',e=>{const n=conta();if(!n){e.preventDefault();alert('Marque ao menos uma resposta.');return}
+    if(n<tot&&!confirm((tot-n)+' questão(ões) em branco. Corrigir mesmo assim?'))e.preventDefault()});
+})();
+</script>
+{% endblock %}

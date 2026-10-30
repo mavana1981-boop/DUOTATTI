@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block titulo %}Gabarito{% endblock %}
+{% block conteudo %}
+<a href="{{ url_for('materia', mid=m.id) }}#questoes" class="mut" style="text-decoration:none;font-weight:800">‹ {{ m.nome }}</a>
+<h1>Conferir gabarito</h1>
+<p class="sub">{{ c.titulo }} · {{ c.total }} questões lidas</p>
+
+<div class="grid g2">
+  <form class="card" method="post">
+    <label class="f">Título do caderno</label>
+    <input type="text" name="titulo" value="{{ c.titulo }}">
+    <label class="f">Gabarito (uma questão por linha)</label>
+    <textarea name="gabarito" rows="16" style="font-family:ui-monospace,monospace" placeholder="1-A&#10;2-C&#10;3-E">{{ texto }}</textarea>
+    <p class="hint">Aceita “1-A”, “01) B”, “3: D”, tabela copiada da banca ou uma sequência “ACEBD…”. Use X para questão anulada (conta como acerto).</p>
+    <div class="row" style="margin-top:12px">
+      <button class="btn">Salvar e resolver</button>
+      <a class="btn claro" href="{{ url_for('materia', mid=m.id) }}#questoes">Voltar</a>
+    </div>
+  </form>
+  <div class="card">
+    <h2>Arquivos</h2>
+    <p><a href="{{ url_for('caderno_pdf', cid=c.id, tipo='questoes') }}" target="_blank" rel="noopener">PDF das questões</a></p>
+    {% if c.tem_pdf_gabarito %}
+    <p><a href="{{ url_for('caderno_pdf', cid=c.id, tipo='gabarito') }}" target="_blank" rel="noopener">PDF do gabarito</a></p>
+    <iframe class="pdf" style="height:50vh" src="{{ url_for('caderno_pdf', cid=c.id, tipo='gabarito') }}#view=FitH" title="PDF do gabarito"></iframe>
+    {% endif %}
+    <form method="post" action="{{ url_for('caderno_excluir', cid=c.id) }}" style="margin-top:14px"
+          onsubmit="return confirm('Excluir o caderno e todas as tentativas dele?')">
+      <button class="btn vermelho mini">Excluir caderno</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
