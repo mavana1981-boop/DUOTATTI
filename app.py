@@ -103,6 +103,8 @@ class Caderno(db.Model):
     pdf_gabarito = deferred(db.Column(db.LargeBinary))
     tem_pdf_gabarito = db.Column(db.Boolean, default=False)
     assunto = db.Column(db.String(200))  # assunto das questões (ex.: Crase)
+    topico_id = db.Column(db.Integer, db.ForeignKey("topico.id"))
+    topico = db.relationship("Topico")
     gabarito_json = db.Column(db.Text, default="{}")
     criado_em = db.Column(db.DateTime, default=agora)
     tentativas = db.relationship("Tentativa", backref="caderno", order_by="Tentativa.feita_em",
@@ -262,7 +264,7 @@ def seed():
     db.session.commit()
 
 
-NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE")]
+NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER")]
 
 
 def migrar(conn):
@@ -272,6 +274,24 @@ def migrar(conn):
     for tabela, coluna, tipo in NOVAS_COLUNAS:
         if coluna not in {c["name"] for c in insp.get_columns(tabela)}:
             conn.exec_driver_sql(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
+
+
+def definir_topico_caderno(c, topico_id=None, novo=None):
+    """Vincula o caderno a um item do edital/assunto (ou cria um assunto novo)."""
+    t = None
+    if novo and novo.strip():
+        t = garantir_topico(c.materia_id, novo)
+    elif topico_id not in (None, ""):
+        try:
+            tid = int(topico_id)
+        except (TypeError, ValueError):
+            tid = None
+        t = db.session.get(Topico, tid) if tid else None
+        if t and t.materia_id != c.materia_id:
+            t = None
+    c.topico_id = t.id if t else None
+    c.assunto = t.nome if t else None
+    return t
 
 
 def atualizar_topicos_edital():
@@ -316,7 +336,9 @@ def garantir_topico(materia_id, nome):
 def assuntos_para_topicos():
     """Assuntos de cadernos já cadastrados viram tópicos (para bancos antigos)."""
     for c in Caderno.query.filter(Caderno.assunto.isnot(None)).all():
-        garantir_topico(c.materia_id, c.assunto)
+        t = garantir_topico(c.materia_id, c.assunto)
+        if t and not c.topico_id:
+            c.topico_id = t.id
     db.session.commit()
 
 
@@ -819,11 +841,10 @@ def caderno_novo(mid):
 
     titulo = request.form.get("titulo", "").strip() or os.path.splitext(nome)[0]
     c = Caderno(materia_id=m.id, titulo=titulo[:200], arquivo_nome=nome[:200], pdf_questoes=dq,
-                assunto=(request.form.get("assunto", "").strip()[:200] or None),
                 pdf_gabarito=dg, tem_pdf_gabarito=bool(dg))
     c.gabarito = gab
     db.session.add(c)
-    garantir_topico(m.id, c.assunto)
+    definir_topico_caderno(c, request.form.get("topico_id"), request.form.get("novo_assunto"))
     db.session.commit()
     if gab:
         flash(f"Caderno criado: {len(gab)} questões lidas do {origem}. Confira o gabarito antes de resolver.", "ok")
@@ -850,8 +871,7 @@ def caderno_gabarito(cid):
         t = request.form.get("titulo", "").strip()
         if t:
             c.titulo = t[:200]
-        c.assunto = request.form.get("assunto", "").strip()[:200] or None
-        garantir_topico(c.materia_id, c.assunto)
+        definir_topico_caderno(c, request.form.get("topico_id"), request.form.get("novo_assunto"))
         if not gab:
             flash("Não entendi o gabarito. Use uma linha por questão, ex.: 1-A", "erro")
         else:
@@ -974,17 +994,21 @@ def api_aula_topico(aid):
 @app.post("/api/caderno/<int:cid>/assunto")
 def api_caderno_assunto(cid):
     c = db.get_or_404(Caderno, cid)
-    c.assunto = ((request.get_json(silent=True) or {}).get("assunto") or "").strip()[:200] or None
-    garantir_topico(c.materia_id, c.assunto)
+    d = request.get_json(silent=True) or {}
+    if "topico_id" in d or "novo" in d:
+        definir_topico_caderno(c, d.get("topico_id"), d.get("novo"))
+    else:  # compatibilidade: texto livre
+        definir_topico_caderno(c, None, (d.get("assunto") or "").strip() or None)
     db.session.commit()
-    return jsonify(ok=True, assunto=c.assunto)
+    return jsonify(ok=True, assunto=c.assunto, topico_id=c.topico_id)
 
 
 def por_assunto(m):
     """Desempenho nas questões agrupado pelo assunto de cada caderno."""
     grupos = {}
     for c in m.cadernos:
-        g = grupos.setdefault(c.assunto or "Sem assunto definido", {"resp": 0, "ac": 0, "tent": 0})
+        nome = c.topico.nome if c.topico else (c.assunto or "Sem assunto definido")
+        g = grupos.setdefault(nome, {"resp": 0, "ac": 0, "tent": 0})
         for t in c.tentativas:
             g["resp"] += t.respondidas
             g["ac"] += t.acertos

@@ -106,6 +106,10 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
     <form method="post" action="{{ url_for('caderno_novo', mid=m.id) }}" enctype="multipart/form-data">
       <label class="f">PDF das questões</label>
       <input type="file" name="pdf_questoes" accept="application/pdf,.pdf" required>
+      <label class="f">Vincular a um item do edital ou assunto</label>
+      <select name="topico_id"><option value="">—</option>{{ opcoes(m) }}</select>
+      <label class="f">…ou crie um assunto novo</label>
+      <input type="text" name="novo_assunto" placeholder="Ex.: Crimes contra a fé pública — falsidade documental">
       <label class="f">PDF do gabarito (opcional)</label>
       <input type="file" name="pdf_gabarito" accept="application/pdf,.pdf">
       <p class="hint">Se o gabarito estiver no fim do PDF das questões, pode deixar este campo vazio.</p>
@@ -113,9 +117,6 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
       <textarea name="gabarito_texto" rows="3" placeholder="1-A 2-C 3-E …  ou  ACEBD…"></textarea>
       <label class="f">Título (opcional)</label>
       <input type="text" name="titulo" placeholder="Ex.: VUNESP 2023 — Crase">
-      <label class="f">Assunto das questões (opcional)</label>
-      <input type="text" name="assunto" list="topsm" placeholder="Ex.: Crase">
-      <datalist id="topsm">{% for t in m.topicos %}<option value="{{ t.nome }}">{% endfor %}</datalist>
       <div style="margin-top:14px"><button class="btn azul">Criar caderno</button></div>
     </form>
   </details>
@@ -125,12 +126,15 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
     <div class="num {{ 'lida' if ts }}">{{ c.total }}</div>
     <div style="flex:1;min-width:0">
       <div class="nome">{{ c.titulo }}</div>
-      <div class="det">{% if c.assunto %}<b>{{ c.assunto }}</b> · {% endif %}{{ c.total }} questões ·
+      <div class="det">{{ c.total }} questões ·
         {% if ts %}{{ ts|length }} tentativa{{ '' if ts|length == 1 else 's' }} · última
           <b style="color:{{ 'var(--ok)' if ts[-1].percentual >= meta_acerto else 'var(--err)' }}">{{ ts[-1].percentual|pct }}</b>
           · melhor {{ (ts|map(attribute='percentual')|max)|pct }}
         {% else %}nunca resolvido{% endif %}
       </div>
+      <select class="item-edital {{ 'vazio' if not c.topico_id }}" data-caderno="{{ c.id }}" aria-label="Item do edital das questões {{ c.titulo }}">
+        <option value="">Item do edital / assunto: não definido</option>{{ opcoes(m, c.topico_id) }}
+      </select>
     </div>
     <a class="btn mini {{ 'claro' if ts else 'ouro' }}" href="{{ url_for('caderno_resolver', cid=c.id) }}">{{ 'Refazer' if ts else 'Resolver' }}</a>
   </div>
@@ -145,7 +149,8 @@ document.querySelectorAll('.item-edital').forEach(sel => {
   let orig = sel.value;
   sel.addEventListener('change', async () => {
     try {
-      const r = await fetch('/api/aula/' + sel.dataset.aula + '/topico', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({topico_id: sel.value})});
+      const url = sel.dataset.aula ? '/api/aula/' + sel.dataset.aula + '/topico' : '/api/caderno/' + sel.dataset.caderno + '/assunto';
+      const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({topico_id: sel.value})});
       if (!(await r.json()).ok) throw 0;
       orig = sel.value; sel.classList.toggle('vazio', !sel.value);
       sel.classList.add('salvo'); setTimeout(() => sel.classList.remove('salvo'), 1200);

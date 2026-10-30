@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_topicos.html" import opcoes %}
 {% block titulo %}Evolução{% endblock %}
 {% block css %}
 .pm-cab,.pm summary{display:grid;grid-template-columns:minmax(150px,1.3fr) 2fr 70px 70px 60px;gap:10px;align-items:center}
@@ -71,7 +72,6 @@
       <span>{{ s.ultimo|pct }}</span>
     </summary>
     <div class="pm-corpo">
-      <datalist id="tops{{ m.id }}">{% for t in m.topicos %}<option value="{{ t.nome }}">{% endfor %}</datalist>
       <h3>Assunto das questões</h3>
       {% for c in m.cadernos %}
       <div class="cad">
@@ -79,8 +79,8 @@
           <a href="{{ url_for('caderno_resolver', cid=c.id) }}"><b>{{ c.titulo }}</b></a>
           <div class="mut" style="font-size:.8rem">{{ c.total }} questões{% if c.tentativas %} · último {{ c.tentativas[-1].percentual|pct }}{% else %} · não resolvido{% endif %}</div>
         </div>
-        <input type="text" class="assunto" list="tops{{ m.id }}" data-caderno="{{ c.id }}" value="{{ c.assunto or '' }}"
-               placeholder="Assunto (ex.: Crase)" aria-label="Assunto do caderno {{ c.titulo }}">
+        <select class="assunto" data-caderno="{{ c.id }}" aria-label="Item do edital do caderno {{ c.titulo }}">
+          <option value="">Assunto não definido</option>{{ opcoes(m, c.topico_id) }}</select>
       </div>
       {% else %}
       <p class="mut">Nenhum caderno de questões nesta matéria. <a href="{{ url_for('materia', mid=m.id) }}#questoes">Enviar questões</a></p>
@@ -170,12 +170,11 @@ document.querySelectorAll('.bola').forEach(b => b.addEventListener('click', asyn
 // assunto dos cadernos (salva ao sair do campo)
 document.querySelectorAll('.assunto').forEach(i => {
   i.dataset.orig = i.value;
-  i.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); i.blur(); } });
   i.addEventListener('change', async () => {
     try {
-      const r = await fetch('/api/caderno/' + i.dataset.caderno + '/assunto', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({assunto: i.value})});
+      const r = await fetch('/api/caderno/' + i.dataset.caderno + '/assunto', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({topico_id: i.value})});
       if (!(await r.json()).ok) throw 0;
-      i.classList.add('salvo'); setTimeout(() => i.classList.remove('salvo'), 1200);
+      i.dataset.orig = i.value; i.classList.add('salvo'); setTimeout(() => i.classList.remove('salvo'), 1200);
     } catch (_) { alert('Não foi possível salvar o assunto.'); i.value = i.dataset.orig; }
   });
 });

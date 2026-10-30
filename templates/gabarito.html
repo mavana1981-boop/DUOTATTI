@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_topicos.html" import opcoes %}
 {% block titulo %}Gabarito{% endblock %}
 {% block conteudo %}
 <a href="{{ url_for('materia', mid=m.id) }}#questoes" class="mut" style="text-decoration:none;font-weight:800">‹ {{ m.nome }}</a>
@@ -9,9 +10,10 @@
   <form class="card" method="post">
     <label class="f">Título do caderno</label>
     <input type="text" name="titulo" value="{{ c.titulo }}">
-    <label class="f">Assunto das questões</label>
-    <input type="text" name="assunto" list="topsg" value="{{ c.assunto or '' }}" placeholder="Ex.: Crase">
-    <datalist id="topsg">{% for t in m.topicos %}<option value="{{ t.nome }}">{% endfor %}</datalist>
+    <label class="f">Item do edital ou assunto das questões</label>
+    <select name="topico_id"><option value="">—</option>{{ opcoes(m, c.topico_id) }}</select>
+    <label class="f">…ou crie um assunto novo</label>
+    <input type="text" name="novo_assunto" placeholder="Ex.: Crase com horas">
     <label class="f">Gabarito (uma questão por linha)</label>
     <textarea name="gabarito" rows="16" style="font-family:ui-monospace,monospace" placeholder="1-A&#10;2-C&#10;3-E">{{ texto }}</textarea>
     <p class="hint">Aceita “1-A”, “01) B”, “3: D”, tabela copiada da banca ou uma sequência “ACEBD…”. Use X para questão anulada (conta como acerto).</p>
