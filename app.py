@@ -647,6 +647,84 @@ def plano_do_dia():
             "total_necessario": total_necessario, "total_feito": total_necessario - restante}
 
 
+def projecao_leituras():
+    """Simula, dia a dia até a data limite, quais aulas serão lidas, com as mesmas regras do plano:
+    meta = leituras que faltam ÷ dias restantes; rodízio de matérias; aulas perto do limite de dias primeiro.
+    Retorna ({data: [(aula, vez, urgente)]}, {aula_id: data da próxima leitura prevista})."""
+    p = plano_do_dia()
+    h = hoje()
+    alvo, max_dias, limite = p["alvo"], p["max_dias"], p["limite"]
+    aulas = Aula.query.join(Materia).order_by(Materia.ordem, Aula.ordem, Aula.id).all()
+    por_id = {a.id: a for a in aulas}
+    n = {a.id: p["est"][a.id]["n"] for a in aulas}
+    ult = {a.id: (p["est"][a.id]["ultima"].date() if p["est"][a.id]["ultima"] else None) for a in aulas}
+    seq = 0
+    ult_mat = {}
+    for a in aulas:
+        if ult[a.id] and (a.materia_id not in ult_mat or (ult[a.id], 0) > ult_mat[a.materia_id]):
+            ult_mat[a.materia_id] = (ult[a.id], 0)
+    dias, proxima = {}, {}
+    for f in p["fila"]:  # hoje = fila do plano
+        a = f["aula"]
+        dias.setdefault(h, []).append((a, f["vez"], f["urgente"]))
+        proxima.setdefault(a.id, h)
+        n[a.id] += 1
+        ult[a.id] = h
+        seq += 1
+        ult_mat[a.materia_id] = (h, seq)
+    d = h + timedelta(days=1)
+    while d <= limite:
+        restante = sum(max(0, alvo - n[i]) for i in n)
+        if not restante:
+            break
+        meta = math.ceil(restante / ((limite - d).days + 1))
+        cands = [i for i in n if n[i] < alvo]
+        escolhidas = []
+        while cands:
+            urg = [i for i in cands if n[i] > 0 and ult[i] and (d - ult[i]).days >= max_dias - 2]
+            if len(escolhidas) >= meta and not urg:
+                break
+            if urg:
+                i = max(urg, key=lambda x: ((d - ult[x]).days, -n[x]))
+                u = True
+            else:
+                mid = min({por_id[x].materia_id for x in cands},
+                          key=lambda m: ult_mat.get(m) or (date.min, 0))
+                i = min((x for x in cands if por_id[x].materia_id == mid),
+                        key=lambda x: (n[x], ult[x] or date.min, por_id[x].ordem or 0, x))
+                u = False
+            escolhidas.append((por_id[i], n[i] + 1, u))
+            proxima.setdefault(i, d)
+            n[i] += 1
+            ult[i] = d
+            seq += 1
+            ult_mat[por_id[i].materia_id] = (d, seq)
+            cands.remove(i)
+        if escolhidas:
+            dias[d] = escolhidas
+        d += timedelta(days=1)
+    return dias, proxima
+
+
+def dados_calendario():
+    """JSON do calendário: leituras feitas (passado) e previstas (futuro)."""
+    cfg = configs()
+    previstas, proxima = projecao_leituras()
+    cal = {}
+    for l in Leitura.query.order_by(Leitura.lida_em).all():
+        a = l.aula
+        cal.setdefault(l.lida_em.date().isoformat(), {"f": [], "p": []})["f"].append(
+            {"t": a.titulo, "m": a.materia.nome, "c": a.materia.cor, "v": l.numero,
+             "h": l.lida_em.strftime("%H:%M"), "id": a.id})
+    for d, itens in previstas.items():
+        for a, vez, urg in itens:
+            cal.setdefault(d.isoformat(), {"f": [], "p": []})["p"].append(
+                {"t": a.titulo, "m": a.materia.nome, "c": a.materia.cor, "v": vez, "u": urg, "id": a.id})
+    marcos = {_data_cfg(cfg, "data_limite_leituras").isoformat(): "Fim das leituras",
+              _data_cfg(cfg, "data_prova").isoformat(): "Prova"}
+    return {"dias": cal, "marcos": marcos, "hoje": hoje().isoformat()}, proxima
+
+
 def resumo_dia():
     cfg = configs()
     h = hoje()
@@ -1178,7 +1256,9 @@ def historico():
     eventos = ([("leitura", l.lida_em, l) for l in Leitura.query.order_by(Leitura.lida_em.desc()).limit(15)]
                + [("questoes", t.feita_em, t) for t in reversed(tents[-15:])])
     eventos.sort(key=lambda e: e[1], reverse=True)
+    cal, proxima = dados_calendario()
     return render_template("historico.html", materias=[(m, stats_materia(m), por_assunto(m)) for m in materias],
+                           cal=cal, proxima=proxima, cal_hoje=hoje(),
                            pontos=pontos, semanas=semanas, eventos=eventos[:20])
 
 

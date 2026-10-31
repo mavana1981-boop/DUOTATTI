@@ -2,6 +2,37 @@
 {% from "_topicos.html" import opcoes %}
 {% block titulo %}Evolução{% endblock %}
 {% block css %}
+.cal-leg{display:flex;gap:14px;flex-wrap:wrap;font-size:.78rem;color:var(--mut);font-weight:700;margin:10px 0 8px}
+.cal-leg span{display:flex;gap:5px;align-items:center}
+.lg{width:12px;height:12px;border-radius:50%;display:inline-block}
+.lg.feita{background:var(--ok)}.lg.prev{border:2px dashed var(--blue)}.lg.urg{border:2px solid var(--err)}
+.cal-sem,.cal-grade{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-sem span{text-align:center;font-size:.72rem;font-weight:800;color:var(--mut);text-transform:uppercase}
+.cal-dia{min-height:70px;border:2px solid var(--line);border-radius:12px;padding:4px 5px;background:var(--card);cursor:pointer;text-align:left;font:inherit;color:var(--ink);display:flex;flex-direction:column;gap:3px}
+.cal-dia:hover{border-color:var(--blue)}
+.cal-dia.fora{opacity:.35}
+.cal-dia.vazio{cursor:default;background:transparent;border-style:dashed}
+.cal-dia.hoje{border-color:var(--ok);box-shadow:inset 0 0 0 1px var(--ok)}
+.cal-dia.sel{border-color:var(--blue);background:color-mix(in srgb,var(--blue) 8%,var(--card))}
+.cal-dia.marco{background:color-mix(in srgb,var(--xp) 14%,var(--card))}
+.cal-dia .dn{font-weight:900;font-size:.8rem}
+.cal-dia .mk{font-size:.62rem;font-weight:900;color:var(--xp2);text-transform:uppercase;line-height:1.1}
+.pts{display:flex;flex-wrap:wrap;gap:3px}
+.pts i{width:9px;height:9px;border-radius:50%;display:block}
+.pts i.p{background:transparent!important;border:2px dashed currentColor}
+.pts i.u{box-shadow:0 0 0 2px var(--err)}
+.cal-dia .qt{font-size:.68rem;font-weight:800;color:var(--mut);margin-top:auto}
+.cal-det{margin-top:12px}
+.cal-det h3{font-size:.95rem;font-weight:900;margin:0 0 6px}
+.cal-det ul{list-style:none;margin:0;padding:0}
+.cal-det li{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:.9rem}
+.cal-det li:last-child{border-bottom:0}
+.cal-det li i{flex:none;width:12px;height:12px;border-radius:50%}
+.cal-det li i.p{background:transparent!important;border:2px dashed}
+.cal-det li a{color:var(--ink);text-decoration:none;font-weight:800}
+.cal-det small{color:var(--mut)}
+@media (max-width:560px){.cal-dia{min-height:52px;padding:3px}.cal-dia .qt{display:none}.pts i{width:7px;height:7px}}
+.ae-txt .prox{color:var(--blue);font-weight:700}
 .pm-cab,.pm summary{display:grid;grid-template-columns:minmax(150px,1.3fr) 2fr 70px 70px 60px;gap:10px;align-items:center}
 .pm-cab{font-size:.75rem;font-weight:800;text-transform:uppercase;color:var(--mut);padding:0 10px 6px;border-bottom:2px solid var(--line)}
 .pm{border-bottom:1px solid var(--line)}
@@ -50,7 +81,26 @@
 {% endblock %}
 {% block conteudo %}
 <h1>Sua evolução</h1>
-<p class="sub">Acerto por bateria de questões, ritmo semanal e desempenho por matéria.</p>
+<p class="sub">Calendário de leituras, acerto por bateria de questões, ritmo semanal e desempenho por matéria.</p>
+
+<section class="card" id="calendario">
+  <div class="row">
+    <h2 style="margin:0">Calendário de leituras</h2>
+    <div class="right row" style="gap:6px">
+      <button type="button" class="btn claro mini" id="cal-ant" aria-label="Mês anterior">‹</button>
+      <b id="cal-mes" style="min-width:130px;text-align:center"></b>
+      <button type="button" class="btn claro mini" id="cal-prox" aria-label="Próximo mês">›</button>
+    </div>
+  </div>
+  <div class="cal-leg">
+    <span><i class="lg feita"></i>leituras feitas</span>
+    <span><i class="lg prev"></i>previstas</span>
+    <span><i class="lg urg"></i>aula perto de 10 dias parada</span>
+  </div>
+  <div class="cal-sem"><span>seg</span><span>ter</span><span>qua</span><span>qui</span><span>sex</span><span>sáb</span><span>dom</span></div>
+  <div class="cal-grade" id="cal-grade"></div>
+  <div class="cal-det" id="cal-det" aria-live="polite"></div>
+</section>
 
 <section class="card">
   <div class="row"><h2 style="margin:0">Acerto por bateria</h2>
@@ -99,6 +149,8 @@
           <div class="ae-txt">
             <a href="{{ url_for('aula_ver', aid=a.id) }}"><b>{{ a.titulo }}</b></a>
             <small class="{{ 'mut' if a.topico else 'sem' }}">{{ a.topico.rotulo if a.topico else 'Assunto não definido — defina em Aprender' }}</small>
+            {% if a.id in proxima %}<small class="prox">Próxima leitura prevista: {{ 'hoje' if proxima[a.id] == cal_hoje else proxima[a.id].strftime('%d/%m') }}{% if a.leituras %} · última em {{ a.leituras[-1].lida_em|dt('%d/%m') }}{% endif %}</small>
+            {% elif a.leituras|length >= s.alvo %}<small class="prox" style="color:var(--ok)">Concluída — {{ s.alvo }} leituras</small>{% endif %}
           </div>
           <div class="pips" role="group" aria-label="Leituras de {{ a.titulo }}">
             {% for k in range(1, s.alvo + 1) %}
@@ -245,5 +297,56 @@ document.querySelectorAll('.assunto').forEach(i => {
     } catch (_) { alert('Não foi possível salvar o assunto.'); i.value = i.dataset.orig; }
   });
 });
+
+// ---------- calendário ----------
+(function(){
+  const CAL = {{ cal|tojson }};
+  const MESES = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  const grade = document.getElementById('cal-grade'), det = document.getElementById('cal-det'), rot = document.getElementById('cal-mes');
+  const iso = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  const hoje = new Date(CAL.hoje + 'T12:00:00');
+  const chaves = Object.keys(CAL.dias).concat(Object.keys(CAL.marcos)).sort();
+  const mesMin = chaves.length ? new Date(chaves[0] + 'T12:00:00') : hoje, mesMax = chaves.length ? new Date(chaves[chaves.length-1] + 'T12:00:00') : hoje;
+  let ano = hoje.getFullYear(), mes = hoje.getMonth(), sel = CAL.hoje;
+  const esc = t => String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  function detalhe(k){
+    sel = k; const d = CAL.dias[k] || {f:[], p:[]}, dt = new Date(k + 'T12:00:00');
+    const tit = dt.toLocaleDateString('pt-BR', {weekday:'long', day:'2-digit', month:'long'});
+    let h = '<h3>' + tit.charAt(0).toUpperCase() + tit.slice(1) + (CAL.marcos[k] ? ' — ' + CAL.marcos[k] : '') + '</h3>';
+    if (!d.f.length && !d.p.length) h += '<p class="mut" style="margin:0">Nenhuma leitura ' + (k < CAL.hoje ? 'neste dia.' : 'prevista para este dia.') + '</p>';
+    h += '<ul>';
+    d.f.forEach(x => h += '<li><i style="background:' + x.c + '"></i><span><a href="/aula/' + x.id + '">' + esc(x.t) + '</a><br><small>' + esc(x.m) + ' · ' + x.v + 'ª leitura · ' + x.h + '</small></span></li>');
+    d.p.forEach(x => h += '<li><i class="p" style="border-color:' + x.c + '"></i><span><a href="/aula/' + x.id + '">' + esc(x.t) + '</a><br><small>' + esc(x.m) + ' · ' + x.v + 'ª leitura prevista' + (x.u ? ' · <b style="color:var(--err)">prioridade (perto de 10 dias parada)</b>' : '') + '</small></span></li>');
+    h += '</ul>';
+    det.innerHTML = h;
+    grade.querySelectorAll('.cal-dia').forEach(b => b.classList.toggle('sel', b.dataset.k === k));
+  }
+  function desenhar(){
+    rot.textContent = MESES[mes] + ' ' + ano;
+    const ini = new Date(ano, mes, 1, 12), off = (ini.getDay() + 6) % 7;
+    let h = '';
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(ano, mes, 1 - off + i, 12), k = iso(d), info = CAL.dias[k], fora = d.getMonth() !== mes;
+      if (i >= 35 && fora && d.getDate() < 8) break;
+      const cls = ['cal-dia']; if (fora) cls.push('fora'); if (k === CAL.hoje) cls.push('hoje'); if (CAL.marcos[k]) cls.push('marco'); if (k === sel) cls.push('sel');
+      let pts = '', qt = '';
+      if (info) {
+        info.f.forEach(x => pts += '<i style="background:' + x.c + '" title="' + esc(x.t) + '"></i>');
+        info.p.forEach(x => pts += '<i class="p' + (x.u ? ' u' : '') + '" style="color:' + x.c + '" title="' + esc(x.t) + ' (prevista)"></i>');
+        qt = info.f.length ? info.f.length + ' feita' + (info.f.length > 1 ? 's' : '') : '';
+        if (info.p.length) qt += (qt ? ' · ' : '') + info.p.length + ' prev.';
+      }
+      h += '<button type="button" class="' + cls.join(' ') + '" data-k="' + k + '"><span class="dn">' + d.getDate() + '</span>' +
+           (CAL.marcos[k] ? '<span class="mk">' + CAL.marcos[k] + '</span>' : '') + '<span class="pts">' + pts + '</span><span class="qt">' + qt + '</span></button>';
+    }
+    grade.innerHTML = h;
+    document.getElementById('cal-ant').disabled = (ano * 12 + mes) <= (mesMin.getFullYear() * 12 + mesMin.getMonth()) && (ano * 12 + mes) <= (hoje.getFullYear() * 12 + hoje.getMonth());
+    document.getElementById('cal-prox').disabled = (ano * 12 + mes) >= (mesMax.getFullYear() * 12 + mesMax.getMonth());
+  }
+  grade.addEventListener('click', e => { const b = e.target.closest('.cal-dia'); if (b) detalhe(b.dataset.k); });
+  document.getElementById('cal-ant').addEventListener('click', () => { mes--; if (mes < 0) { mes = 11; ano--; } desenhar(); });
+  document.getElementById('cal-prox').addEventListener('click', () => { mes++; if (mes > 11) { mes = 0; ano++; } desenhar(); });
+  desenhar(); detalhe(CAL.hoje);
+})();
 </script>
 {% endblock %}
