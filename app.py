@@ -19,6 +19,8 @@ from pypdf import PdfReader
 from sqlalchemy.orm import deferred
 from werkzeug.utils import secure_filename
 
+from edital import EDITAL, TODO, chave_legada
+
 TZ = ZoneInfo("America/Sao_Paulo")
 LETRAS = "ABCDE"
 
@@ -70,6 +72,14 @@ class Topico(db.Model):
     nome = db.Column(db.String(200), nullable=False)
     ordem = db.Column(db.Integer, default=0)
     personalizado = db.Column(db.Boolean, default=False)  # True = assunto criado por você (não veio do edital)
+    grupo = db.Column(db.String(200))  # item do edital (macrotópico) ao qual o assunto pertence
+
+    @property
+    def rotulo(self):
+        """Texto para exibir fora da lista agrupada."""
+        if self.nome == TODO and self.grupo:
+            return f"{self.grupo} (todo o item)"
+        return self.nome
 
 
 class Aula(db.Model):
@@ -179,92 +189,34 @@ def cfg_num(cfg, chave):
 # --------------------------------------------------------------------------- #
 # Matérias do edital (TJSP Escrevente — Edital 02/2026)
 # --------------------------------------------------------------------------- #
-MATERIAS = [
-    ("Língua Portuguesa", 16, "Eliminatória · mínimo 8 acertos", "#3d8bfd", [
-        "Interpretação, informações literais e inferências",
-        "Ponto de vista do autor e estruturação do texto (coesão)",
-        "Significação contextual, sinônimos, antônimos e sentido figurado",
-        "Classes de palavras", "Concordância verbal e nominal", "Regência verbal e nominal",
-        "Colocação pronominal", "Crase", "Pontuação"]),
-    ("Direito Penal", None, "CP · bloco de Direito (30 questões)", "#e5484d", [
-        "Arts. 293 a 311-A — Crimes contra a fé pública: falsidade de papéis públicos, falsidade documental, outras falsidades e fraudes em certames",
-        "Arts. 312 a 317 — Crimes de funcionário público: peculato, inserção de dados falsos, extravio de documento, emprego irregular de verbas, concussão e corrupção passiva",
-        "Arts. 319 a 333 — Prevaricação, condescendência, advocacia administrativa, violação de sigilo, conceito de funcionário público e crimes de particular (resistência, desobediência, desacato, tráfico de influência, corrupção ativa)",
-        "Arts. 336, 337 e 339 a 347 — Inutilização de edital ou documento e crimes contra a administração da justiça (denunciação caluniosa, falso testemunho, coação no processo, exercício arbitrário, fraude processual)",
-        "Arts. 357 e 359 — Exploração de prestígio e desobediência a decisão judicial sobre perda ou suspensão de direito"]),
-    ("Direito Processual Penal", None, "CPP e Lei 9.099", "#d6409f", [
-        "CPP arts. 251 a 274 — Sujeitos do processo: juiz, Ministério Público, acusado e defensor, assistente e auxiliares da justiça",
-        "CPP arts. 351 a 372 — Citações e intimações",
-        "CPP arts. 394 a 497 — Procedimento comum (instrução criminal) e Tribunal do Júri",
-        "CPP arts. 531 a 548 — Procedimento sumário e restauração de autos",
-        "CPP arts. 574 a 667 — Recursos (RESE, apelação, embargos, carta testemunhável), revisão criminal e habeas corpus",
-        "Lei 9.099/95 arts. 60 a 83, 88 e 89 — Juizado Especial Criminal: transação penal, procedimento sumaríssimo, representação e suspensão condicional do processo"]),
-    ("Direito Processual Civil", None, "CPC e Juizados", "#8e4ec6", [
-        "CPC arts. 144 a 155 — Impedimento, suspeição e auxiliares da justiça (escrivão e oficial de justiça)",
-        "CPC arts. 188 a 275 — Atos processuais: forma, tempo, lugar, prazos, citação, cartas e intimações",
-        "CPC arts. 294 a 311 — Tutela provisória: urgência (antecipada e cautelar) e evidência",
-        "CPC arts. 318 a 404 — Procedimento comum: petição inicial, audiência de conciliação, contestação, revelia, saneamento e provas (parte geral)",
-        "CPC arts. 405 a 538 — Provas em espécie, sentença, coisa julgada, liquidação e cumprimento de sentença",
-        "CPC arts. 994 a 1026 — Recursos: disposições gerais, apelação, agravo de instrumento, agravo interno e embargos de declaração",
-        "Lei 9.099/95 arts. 3 a 19 — Juizado Especial Cível: competência, partes, atos processuais, pedido, citações e intimações",
-        "Lei 12.153/2009 — Juizados Especiais da Fazenda Pública"]),
-    ("Direito Constitucional", None, "CF", "#e8a317", [
-        "CF art. 5º — Direitos e deveres individuais e coletivos (Título II, Cap. I)",
-        "CF arts. 6º a 11 — Direitos sociais (Título II, Cap. II)",
-        "CF arts. 12 e 13 — Nacionalidade (Título II, Cap. III)",
-        "CF arts. 37 e 38 — Administração Pública: disposições gerais (Título III, Cap. VII, Seção I)",
-        "CF arts. 39 a 41 — Servidores públicos (Título III, Cap. VII, Seção II)",
-        "CF art. 92 — Órgãos do Poder Judiciário"]),
-    ("Direito Administrativo", None, "Estatuto e improbidade", "#12a594", [
-        "Lei 10.261/68 arts. 1 a 86 — Estatuto dos Servidores de SP: disposições preliminares, cargos, provimento (concurso, nomeação, posse, exercício) e vacância",
-        "Lei 10.261/68 arts. 171 a 175 e 239 a 323 — Estatuto dos Servidores de SP: deveres, proibições, responsabilidades, penalidades e processo disciplinar",
-        "Lei 8.429/92 — Improbidade administrativa: atos, sanções e procedimento"]),
-    ("Legislação interna do TJSP", None, "Resoluções e normas", "#0b8fd6", [
-        "Resolução TJSP 850/2021 — Teletrabalho", "Resolução TJSP 963/2025 — Governança e uso do eproc",
-        "LC 1.111/2010 — Plano de cargos e carreiras dos servidores do TJSP", "Regimento Interno do TJSP",
-        "Normas da Corregedoria, Tomo I — Seções indicadas no edital (Caps. II e III)"]),
-    ("Conhecimentos Gerais", 24, "Classificatória", "#46a758", [
-        "Atualidades (fatos a partir de 2026)",
-        "Estatuto da Pessoa com Deficiência (arts. 1–13 e 34–38)",
-        "Matemática: proporção, porcentagem, regra de três, média",
-        "Matemática: juros simples, equações, sistemas",
-        "Matemática: geometria, medidas, tabelas e gráficos",
-        "Informática: Windows e Microsoft 365 (Word, Excel)",
-        "Informática: Teams, OneDrive, e-mail e internet",
-        "Raciocínio lógico: estruturas e argumentação",
-        "Raciocínio lógico: sequências e diagramas"]),
+MATERIAS = [  # nome, questões na prova, descrição, cor  (tópicos ficam em edital.py)
+    ("Língua Portuguesa", 16, "Bloco I · eliminatória · mínimo 8 acertos", "#3d8bfd"),
+    ("Direito Penal", None, "Bloco II · Conhecimentos em Direito (30 questões)", "#e5484d"),
+    ("Direito Processual Penal", None, "Bloco II · CPP e Lei 9.099/95", "#d6409f"),
+    ("Direito Processual Civil", None, "Bloco II · CPC e Juizados", "#8e4ec6"),
+    ("Direito Constitucional", None, "Bloco II · Constituição Federal", "#e8a317"),
+    ("Direito Administrativo", None, "Bloco II · Estatuto de SP e improbidade", "#12a594"),
+    ("Legislação interna do TJSP", None, "Bloco II · resoluções, regimento e normas", "#0b8fd6"),
+    ("Conhecimentos Gerais", 24, "Bloco III · atualidades, matemática, informática e lógica", "#46a758"),
 ]
 
-# nomes antigos dos tópicos -> novo nome (para atualizar bancos já criados)
-RENOMEAR_TOPICOS = {
-    "CF Título II, Capítulos I a III (direitos e garantias)": "CF art. 5º — Direitos e deveres individuais e coletivos (Título II, Cap. I)",
-    "CF Título III, Capítulo VII, Seções I e II (administração pública)": "CF arts. 37 e 38 — Administração Pública: disposições gerais (Título III, Cap. VII, Seção I)",
-    "CF art. 92": "CF art. 92 — Órgãos do Poder Judiciário",
-    "Lei 10.261/68 arts. 1 a 86": "Lei 10.261/68 arts. 1 a 86 — Estatuto dos Servidores de SP: disposições preliminares, cargos, provimento (concurso, nomeação, posse, exercício) e vacância",
-    "Lei 10.261/68 arts. 171 a 175 e 239 a 323": "Lei 10.261/68 arts. 171 a 175 e 239 a 323 — Estatuto dos Servidores de SP: deveres, proibições, responsabilidades, penalidades e processo disciplinar",
-    "Lei 8.429/92 (improbidade)": "Lei 8.429/92 — Improbidade administrativa: atos, sanções e procedimento",
-    "Resolução TJSP 850/2021 (teletrabalho)": "Resolução TJSP 850/2021 — Teletrabalho",
-    "Resolução TJSP 963/2025 (eproc)": "Resolução TJSP 963/2025 — Governança e uso do eproc",
-    "LC 1.111/2010 (plano de cargos)": "LC 1.111/2010 — Plano de cargos e carreiras dos servidores do TJSP",
-    "Normas da Corregedoria, Tomo I": "Normas da Corregedoria, Tomo I — Seções indicadas no edital (Caps. II e III)",
-}
-for _m in MATERIAS:  # itens antigos sem assunto: "Arts. 312 a 317" -> "Arts. 312 a 317 — ..."
-    for _t in _m[4]:
-        if " — " in _t:
-            RENOMEAR_TOPICOS.setdefault(_t.split(" — ")[0], _t)
+
+def topicos_desejados(nome_materia):
+    return [(g, a) for g, assuntos in EDITAL.get(nome_materia, []) for a in assuntos]
 
 
 def seed():
     if Materia.query.count():
         return
-    for i, (nome, q, info, cor, tops) in enumerate(MATERIAS):
+    for i, (nome, q, info, cor) in enumerate(MATERIAS):
         m = Materia(nome=nome, questoes_prova=q, info=info, cor=cor, ordem=i)
-        m.topicos = [Topico(nome=t, ordem=j) for j, t in enumerate(tops)]
+        m.topicos = [Topico(nome=a, grupo=g, ordem=k, personalizado=False)
+                     for k, (g, a) in enumerate(topicos_desejados(nome))]
         db.session.add(m)
     db.session.commit()
 
 
-NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER")]
+NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)")]
 
 
 def migrar(conn):
@@ -290,7 +242,7 @@ def definir_topico_caderno(c, topico_id=None, novo=None):
         if t and t.materia_id != c.materia_id:
             t = None
     c.topico_id = t.id if t else None
-    c.assunto = t.nome if t else None
+    c.assunto = t.rotulo if t else None
     return t
 
 
@@ -302,35 +254,46 @@ def fundir_topico(origem, destino):
 
 
 def atualizar_topicos_edital():
-    """Deixa os itens do edital com o assunto no nome, fundindo duplicados sem perder vínculos."""
+    """Sincroniza os tópicos com edital.py (item -> assuntos), fundindo nomes antigos sem perder vínculos."""
     for m in Materia.query.all():
-        alvo = next((x[4] for x in MATERIAS if x[0] == m.nome), None)
-        if not alvo:
+        desejados = topicos_desejados(m.nome)
+        if not desejados:
             continue
+        meta = next((x for x in MATERIAS if x[0] == m.nome), None)
+        if meta and m.info != meta[2]:
+            m.info = meta[2]
+        alvo = set(desejados)
         edital = [t for t in Topico.query.filter_by(materia_id=m.id).order_by(Topico.id).all()
                   if not t.personalizado]
-        por_nome = {}
-        # primeiro os que já têm o nome novo, para eles ficarem como destino
-        edital.sort(key=lambda t: (t.nome not in alvo, t.id))
+        edital.sort(key=lambda t: ((t.grupo, t.nome) not in alvo, t.id))  # os já atuais viram destino
+        por_chave = {}
         for t in edital:
-            nome = RENOMEAR_TOPICOS.get(t.nome, t.nome)
-            if nome in por_nome:
-                fundir_topico(t, por_nome[nome])
+            chave = (t.grupo, t.nome) if (t.grupo, t.nome) in alvo else chave_legada(m.nome, t.nome)
+            if chave is None:  # tópico antigo sem correspondente
+                tem_vinculo = (Aula.query.filter_by(topico_id=t.id).count()
+                               or Caderno.query.filter_by(topico_id=t.id).count())
+                if tem_vinculo:
+                    t.grupo = "Outros (versão anterior)"
+                else:
+                    db.session.delete(t)
+                continue
+            if chave in por_chave:
+                fundir_topico(t, por_chave[chave])
             else:
-                t.nome = nome
-                por_nome[nome] = t
+                t.grupo, t.nome = chave
+                por_chave[chave] = t
         db.session.flush()
-        for i, nome in enumerate(alvo):
-            t = por_nome.get(nome)
+        for k, chave in enumerate(desejados):
+            t = por_chave.get(chave)
             if t is None:
-                t = Topico(materia_id=m.id, nome=nome, personalizado=False)
+                t = Topico(materia_id=m.id, grupo=chave[0], nome=chave[1], personalizado=False)
                 db.session.add(t)
-            t.ordem = i
+            t.ordem = k
     db.session.flush()
-    for c in Caderno.query.filter(Caderno.topico_id.isnot(None)).all():  # assunto acompanha o nome do tópico
+    for c in Caderno.query.filter(Caderno.topico_id.isnot(None)).all():
         t = db.session.get(Topico, c.topico_id)
-        if t and c.assunto != t.nome:
-            c.assunto = t.nome
+        if t and c.assunto != t.rotulo:
+            c.assunto = t.rotulo
     db.session.commit()
 
 
@@ -340,7 +303,7 @@ def garantir_topico(materia_id, nome):
     if not nome:
         return None
     for t in Topico.query.filter_by(materia_id=materia_id).all():
-        if t.nome.strip().lower() == nome.lower():
+        if t.nome.strip().lower() == nome.lower() or t.rotulo.strip().lower() == nome.lower():
             return t
     ultimo = db.session.query(db.func.max(Topico.ordem)).filter_by(materia_id=materia_id).scalar() or 0
     t = Topico(materia_id=materia_id, nome=nome, ordem=max(ultimo, 999) + 1, personalizado=True)
@@ -1036,7 +999,7 @@ def por_assunto(m):
     """Desempenho nas questões agrupado pelo assunto de cada caderno."""
     grupos = {}
     for c in m.cadernos:
-        nome = c.topico.nome if c.topico else (c.assunto or "Sem assunto definido")
+        nome = c.topico.rotulo if c.topico else (c.assunto or "Sem assunto definido")
         g = grupos.setdefault(nome, {"resp": 0, "ac": 0, "tent": 0})
         for t in c.tentativas:
             g["resp"] += t.respondidas

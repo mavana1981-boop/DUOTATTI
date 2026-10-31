@@ -24,7 +24,14 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
 .lixo:hover,.lixo:focus-visible{color:var(--err);border-color:color-mix(in srgb,var(--err) 40%,transparent);background:color-mix(in srgb,var(--err) 8%,transparent)}
 .num{flex:none;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;font-weight:900;background:var(--soft);color:var(--mut)}
 .num.lida{background:{{ m.cor }};color:#fff}
-.tops{list-style:none;margin:0;padding:0;columns:2 260px}
+.tops{list-style:none;margin:0;padding:0 0 6px 22px}
+.macro{border-top:1px solid var(--line)}
+.macro summary{list-style:none;cursor:pointer;display:flex;gap:8px;align-items:baseline;padding:10px 0;flex-wrap:wrap}
+.macro summary::-webkit-details-marker{display:none}
+.macro summary b:before{content:"▸ ";color:var(--mut)}
+.macro[open] summary b:before{content:"▾ "}
+.macro summary .d{flex:none;width:12px;height:12px;border-radius:50%;background:var(--soft);border:2px solid var(--line);align-self:center}
+.macro summary .d.ok{background:var(--ok);border-color:var(--ok)}
 .tops li{padding:4px 0;break-inside:avoid;display:flex;gap:8px;font-size:.92rem}
 .tops .d{flex:none;width:12px;height:12px;border-radius:50%;margin-top:5px;background:var(--soft);border:2px solid var(--line)}
 .tops .d.ok{background:var(--ok);border-color:var(--ok)}
@@ -45,11 +52,29 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
 </section>
 
 <section class="card">
-  <h2>Tópicos do edital e seus assuntos</h2>
-  <ul class="tops">
-    {% for t in m.topicos %}<li><span class="d {{ 'ok' if t.id in s.topicos_lidos }}"></span><span>{% set pt = t.nome.split(' — ', 1) %}{% if pt|length > 1 %}<b>{{ pt[0] }}</b> — {{ pt[1] }}{% else %}{{ t.nome }}{% endif %}{% if t.personalizado %} <span class="tag">assunto</span>{% endif %}</span></li>{% endfor %}
-  </ul>
-  <p class="hint">O tópico fica verde quando uma aula ligada a ele é lida. Os assuntos dados aos cadernos de questões entram aqui automaticamente.</p>
+  <h2>Conteúdo do edital</h2>
+  {% set ed = m.topicos|rejectattr('personalizado')|list %}
+  {% set pe = m.topicos|selectattr('personalizado')|list %}
+  {% set vistos = [] %}{% for t in ed %}{% if (t.grupo or 'Edital') not in vistos %}{% set _ = vistos.append(t.grupo or 'Edital') %}{% endif %}{% endfor %}
+  {% for g in vistos %}
+  {% set itens = ed|selectattr('grupo', 'equalto', g if g != 'Edital' else none)|list %}
+  {% set todo = itens|selectattr('nome', 'equalto', 'Todo o item')|first %}
+  <details class="macro" {{ 'open' if loop.first }}>
+    <summary><span class="d {{ 'ok' if todo and todo.id in s.topicos_lidos }}"></span><b>{{ g }}</b>
+      <small class="mut">{{ itens|rejectattr('nome', 'equalto', 'Todo o item')|list|length }} assunto(s)</small></summary>
+    <ul class="tops">
+      {% for t in itens if t.nome != 'Todo o item' %}
+      <li><span class="d {{ 'ok' if t.id in s.topicos_lidos }}"></span><span>{{ t.nome }}</span></li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endfor %}
+  {% if pe %}
+  <details class="macro" open><summary><b>Seus assuntos</b></summary>
+    <ul class="tops">{% for t in pe %}<li><span class="d {{ 'ok' if t.id in s.topicos_lidos }}"></span><span>{{ t.nome }}</span></li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+  <p class="hint">Cada item do edital abre para mostrar os assuntos. O círculo fica verde quando uma aula ligada ao assunto é lida.</p>
 </section>
 
 <section class="card" id="aulas">
