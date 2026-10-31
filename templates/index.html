@@ -16,9 +16,20 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
 .anel span{width:44px;height:44px;border-radius:50%;background:var(--card);display:grid;place-items:center;font-weight:900;font-size:.85rem}
 .mat h3{margin:0;font-size:1rem;font-weight:900;line-height:1.2}
 .mat small{color:var(--mut);font-weight:700;display:block}
+.alerta{border:2px solid var(--err);background:color-mix(in srgb,var(--err) 9%,transparent);border-radius:14px;padding:10px 12px;margin-bottom:12px;font-size:.92rem}
+.fila-t{font-size:.95rem;font-weight:900;margin:4px 0 6px}
+.fila{list-style:none;margin:0;padding:0;counter-reset:f}
+.fila li{display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}
+.fila li:last-child{border-bottom:0}
+.fila .pt{flex:none;width:28px;height:28px;border-radius:50%;background:var(--c);color:#fff;display:grid;place-items:center;font-weight:900;font-size:.8rem;counter-increment:f}
+.fila .pt:before{content:counter(f)}
+.fila li.urg .pt{box-shadow:0 0 0 3px color-mix(in srgb,var(--err) 45%,transparent)}
+.fl-txt{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
+.fl-txt a{color:var(--ink);text-decoration:none}
+.fl-txt small:first-child{font-weight:800;color:var(--c);font-size:.75rem;text-transform:uppercase;letter-spacing:.03em}
 {% endblock %}
 {% block conteudo %}
-{% set s = h.semana %}
+{% set s = h.dia %}{% set p = s.plano %}
 <section class="card hero">
   {{ tatti(h.humor, 170) }}
   <div class="balao">
@@ -42,17 +53,57 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
   <div class="stat"><small>Acerto (7 dias)</small>
     <b style="color:{{ 'var(--mut)' if s.acerto7 is none else ('var(--ok)' if s.acerto7 >= s.meta_acerto else 'var(--err)') }}">{{ s.acerto7|pct }}</b>
     <small>meta {{ s.meta_acerto|pct }}</small></div>
-  <div class="stat"><small>Aulas lidas (1ª volta)</small><b>{{ tot_lidas }}/{{ tot_aulas }}</b>
+  <div class="stat"><small>Leituras ({{ p.alvo }}x cada aula)</small><b>{{ p.total_feito }}/{{ p.total_necessario }}</b>
     <small>{{ dias_prova if dias_prova is not none else '—' }} dias para a prova</small></div>
 </section>
 
-<section class="card">
-  <h2>Metas da semana</h2>
-  {% set pl = [100, (100 * s.leituras / s.meta_leituras) if s.meta_leituras else 100]|min %}
+<section class="card hojecard">
+  <div class="row"><h2 style="margin:0">Meta de hoje</h2>
+    <span class="tag right">{{ hoje_str }}</span></div>
+
+  {% if p.fase == 'questoes' %}
+  <p style="font-weight:800;margin:10px 0">Fase final: questões e descanso.</p>
+  <p class="mut" style="margin-top:0">O prazo das leituras ({{ p.limite.strftime('%d/%m') }}) já passou. Agora é revisar com questões e chegar descansado à prova.</p>
+  {% elif not p.total_aulas %}
+  <p class="mut">Envie as aulas em PDF (em cada matéria) e eu calculo quantas leituras você precisa fazer por dia.</p>
+  {% else %}
+  {% set pl = [100, (100 * p.feitas_hoje / p.meta_hoje) if p.meta_hoje else 100]|min %}
+  <div class="row" style="margin-top:10px"><b>Leituras de aula</b><span class="right mut"><b style="color:var(--ink)">{{ p.feitas_hoje }}</b>/{{ p.meta_hoje }}</span></div>
+  <div class="bar azul" style="margin:6px 0 6px"><i style="width:{{ pl|round }}%"></i></div>
+  <p class="hint" style="margin:0 0 12px">Faltam <b>{{ p.restante }}</b> leituras para ler cada aula {{ p.alvo }}x até <b>{{ p.limite.strftime('%d/%m') }}</b>
+    ({{ p.dias }} dia{{ '' if p.dias == 1 else 's' }}, contando hoje). A meta é recalculada todo dia conforme o que você já leu.</p>
+
+  {% if p.atrasadas %}
+  <div class="alerta">
+    <b>{{ p.atrasadas|length }} aula{{ 's' if p.atrasadas|length > 1 }} há mais de {{ p.max_dias }} dias sem leitura:</b>
+    {% for a in p.atrasadas[:4] %}<a href="{{ url_for('aula_ver', aid=a.id) }}">{{ a.titulo }}</a>{{ ', ' if not loop.last }}{% endfor %}{% if p.atrasadas|length > 4 %} e mais {{ p.atrasadas|length - 4 }}{% endif %}
+  </div>
+  {% endif %}
+
+  {% if p.fila %}
+  <h3 class="fila-t">Próximas leituras</h3>
+  <ol class="fila">
+    {% for f in p.fila %}{% set a = f.aula %}
+    <li class="{{ 'urg' if f.urgente }}" style="--c:{{ a.materia.cor }}">
+      <span class="pt"></span>
+      <div class="fl-txt">
+        <small>{{ a.materia.nome }}</small>
+        <a href="{{ url_for('aula_ver', aid=a.id) }}"><b>{{ a.titulo }}</b></a>
+        <small class="mut">{{ f.vez }}ª leitura · {{ f.motivo }}</small>
+      </div>
+      <a class="btn mini {{ 'vermelho' if f.urgente else 'azul' }}" href="{{ url_for('aula_ver', aid=a.id) }}">Ler</a>
+    </li>
+    {% endfor %}
+  </ol>
+  {% elif p.meta_hoje and p.feitas_hoje >= p.meta_hoje %}
+  <p style="font-weight:800;color:var(--ok)">Leituras de hoje concluídas! Quer adiantar? Qualquer leitura extra diminui a meta dos próximos dias.</p>
+  {% elif not p.meta_hoje %}
+  <p style="font-weight:800;color:var(--ok)">Todas as aulas já foram lidas {{ p.alvo }}x. Agora é manter a revisão com questões.</p>
+  {% endif %}
+  {% endif %}
+
   {% set pq = [100, (100 * s.questoes / s.meta_questoes) if s.meta_questoes else 100]|min %}
-  <div class="row"><b>Leituras de PDF</b><span class="right mut">{{ s.leituras }}/{{ s.meta_leituras }}</span></div>
-  <div class="bar azul" style="margin:6px 0 12px"><i style="width:{{ pl|round }}%"></i></div>
-  <div class="row"><b>Questões resolvidas</b><span class="right mut">{{ s.questoes }}/{{ s.meta_questoes }}</span></div>
+  <div class="row" style="margin-top:14px"><b>Questões resolvidas</b><span class="right mut"><b style="color:var(--ink)">{{ s.questoes }}</b>/{{ s.meta_questoes }}</span></div>
   <div class="bar" style="margin:6px 0 12px"><i style="width:{{ pq|round }}%"></i></div>
   <div class="row"><b>Acerto nos últimos 7 dias</b><span class="right mut">{{ s.acerto7|pct }} de {{ s.meta_acerto|pct }}</span></div>
   <div class="bar {{ 'vermelho' if s.acerto7 is not none and s.acerto7 < s.meta_acerto else 'ouro' }}" style="margin-top:6px">
@@ -63,10 +114,10 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
 <div class="trilha">
   {% for m, st in trilha %}
   <a class="mat" href="{{ url_for('materia', mid=m.id) }}">
-    <div class="anel" style="--c:{{ m.cor }};--p:{{ st.pct_aulas }}"><span>{{ st.pct_aulas }}%</span></div>
+    <div class="anel" style="--c:{{ m.cor }};--p:{{ st.pct_meta }}"><span>{{ st.pct_meta }}%</span></div>
     <div>
       <h3>{{ m.nome }}</h3>
-      <small>{{ st.aulas_lidas }}/{{ st.aulas }} aulas lidas · {{ st.leituras }} leitura{{ '' if st.leituras == 1 else 's' }}</small>
+      <small>{{ st.aulas }} aula{{ '' if st.aulas == 1 else 's' }} · {{ st.leituras_meta }}/{{ st.leituras_total_meta }} leituras ({{ st.alvo }}x cada)</small>
       {% if st.acerto is not none %}
         <span class="tag {{ 'ok' if st.acerto >= meta_acerto else 'err' }}">{{ st.acerto|pct }} de acerto</span>
       {% else %}<span class="tag">sem questões</span>{% endif %}

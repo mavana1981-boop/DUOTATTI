@@ -10,12 +10,19 @@
     <input type="text" name="nome" value="{{ cfg.nome }}">
     <label class="f">Data da prova</label>
     <input type="date" name="data_prova" value="{{ cfg.data_prova }}">
-    <label class="f">Meta de acerto nas questões (%)</label>
+    <h2 style="margin:18px 0 0">Leituras</h2>
+    <label class="f">Quantas vezes ler cada aula</label>
+    <input type="number" name="meta_leituras_por_aula" min="1" max="20" value="{{ cfg.meta_leituras_por_aula }}">
+    <label class="f">Terminar as leituras até</label>
+    <input type="date" name="data_limite_leituras" value="{{ cfg.data_limite_leituras }}">
+    <p class="hint">Os dias seguintes até a prova ficam para questões e descanso.</p>
+    <label class="f">Máximo de dias sem ver uma aula já iniciada</label>
+    <input type="number" name="max_dias_sem_ver" min="2" max="60" value="{{ cfg.max_dias_sem_ver }}">
+    <h2 style="margin:18px 0 0">Questões</h2>
+    <label class="f">Meta de acerto (%)</label>
     <input type="number" name="meta_acerto" min="1" max="100" value="{{ cfg.meta_acerto }}">
-    <label class="f">Leituras de PDF por semana</label>
-    <input type="number" name="meta_leituras_semana" min="0" value="{{ cfg.meta_leituras_semana }}">
-    <label class="f">Questões por semana</label>
-    <input type="number" name="meta_questoes_semana" min="0" value="{{ cfg.meta_questoes_semana }}">
+    <label class="f">Questões por dia</label>
+    <input type="number" name="meta_questoes_dia" min="0" value="{{ cfg.meta_questoes_dia }}">
     <div style="margin-top:14px"><button class="btn">Salvar metas</button></div>
   </form>
   <div class="card">
@@ -26,13 +33,13 @@
       {% endfor %}
     </div>
     <ul style="padding-left:18px;margin:0;font-size:.92rem">
-      <li><b>Radiante</b>: estudou hoje, acerto ≥ {{ cfg.meta_acerto }}% e metas da semana em dia.</li>
-      <li><b>Feliz</b>: a maior parte das metas no ritmo.</li>
-      <li><b>De olho</b>: metas atrasando ou sem questões recentes.</li>
-      <li><b>Bravo</b>: acerto bem abaixo da meta ou semana atrasada.</li>
+      <li><b>Meta diária de leituras</b> = leituras que faltam ÷ dias até {{ cfg.data_limite_leituras[8:10] }}/{{ cfg.data_limite_leituras[5:7] }}. É recalculada todo dia: atrasou, a meta sobe; adiantou, ela desce.</li>
+      <li><b>Próxima aula</b>: da matéria há mais tempo sem estudo, intercalando as matérias.</li>
+      <li><b>Prioridade</b>: aula já iniciada perto de {{ cfg.max_dias_sem_ver }} dias sem leitura passa na frente.</li>
+      <li><b>Radiante</b>: estudou hoje, bateu leituras e questões do dia e acerto ≥ {{ cfg.meta_acerto }}%.</li>
+      <li><b>Bravo</b>: meta do dia longe, aulas paradas há mais de {{ cfg.max_dias_sem_ver }} dias ou acerto baixo.</li>
       <li><b>Furioso</b>: 3 dias ou mais sem estudar.</li>
     </ul>
-    <p class="hint">As metas semanais são proporcionais ao dia: na quarta, o Tatti espera ~3/7 da meta.</p>
     <p style="margin-top:14px">Agora: <b>{{ h.titulo }}</b></p>
   </div>
 </div>

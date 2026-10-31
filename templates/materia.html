@@ -34,7 +34,8 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
 .lixo svg{width:18px;height:18px}
 .lixo:hover,.lixo:focus-visible{color:var(--err);border-color:color-mix(in srgb,var(--err) 40%,transparent);background:color-mix(in srgb,var(--err) 8%,transparent)}
 .num{flex:none;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;font-weight:900;background:var(--soft);color:var(--mut)}
-.num.lida{background:{{ m.cor }};color:#fff}
+.num.lida{background:color-mix(in srgb,{{ m.cor }} 55%,transparent);color:#fff;font-size:.85rem}
+.num.completa{background:{{ m.cor }}}
 .tops{list-style:none;margin:0;padding:0 0 6px 22px}
 .macro{border-top:1px solid var(--line)}
 .macro summary{list-style:none;cursor:pointer;display:flex;gap:8px;align-items:baseline;padding:10px 0;flex-wrap:wrap}
@@ -55,8 +56,8 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
 </div>
 
 <section class="grid g4" style="margin-bottom:16px">
-  <div class="stat"><small>Aulas lidas</small><b>{{ s.aulas_lidas }}/{{ s.aulas }}</b></div>
-  <div class="stat"><small>Leituras totais</small><b>{{ s.leituras }}</b></div>
+  <div class="stat"><small>Aulas iniciadas</small><b>{{ s.aulas_lidas }}/{{ s.aulas }}</b></div>
+  <div class="stat"><small>Leituras ({{ s.alvo }}x cada)</small><b>{{ s.leituras_meta }}/{{ s.leituras_total_meta }}</b></div>
   <div class="stat"><small>Questões feitas</small><b>{{ s.questoes }}</b></div>
   <div class="stat"><small>Acerto geral</small>
     <b style="color:{{ 'var(--mut)' if s.acerto is none else ('var(--ok)' if s.acerto >= meta_acerto else 'var(--err)') }}">{{ s.acerto|pct }}</b></div>
@@ -113,7 +114,7 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
       <span class="alca" title="Arraste para reordenar" aria-hidden="true">⠿</span>
       <button type="button" class="seta-o desce" aria-label="Mover {{ a.titulo }} para baixo" title="Descer">▼</button>
     </div>
-    <div class="num {{ 'lida' if n }}">{{ n }}x</div>
+    <div class="num {{ 'lida' if n }} {{ 'completa' if n >= s.alvo }}" title="{{ n }} de {{ s.alvo }} leituras">{{ n }}/{{ s.alvo }}</div>
     <div style="flex:1;min-width:0">
       <div class="nome-ed">
         <input type="text" class="renomear" value="{{ a.titulo }}" data-aula="{{ a.id }}" data-arquivo="{{ a.arquivo_nome or '' }}"

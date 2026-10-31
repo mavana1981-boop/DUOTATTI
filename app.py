@@ -3,6 +3,7 @@ DUOTATTI — plataforma de estudos para o concurso de Escrevente Técnico Judici
 Flask + SQLAlchemy (Postgres no Railway / SQLite local).
 """
 import io
+import math
 import json
 import os
 import random
@@ -169,8 +170,10 @@ DEFAULTS = {
     "nome": "Estudante",
     "data_prova": "2027-03-14",
     "meta_acerto": "80",
-    "meta_leituras_semana": "5",
-    "meta_questoes_semana": "60",
+    "meta_leituras_por_aula": "5",      # cada aula deve ser lida 5x
+    "data_limite_leituras": "2027-03-10",  # depois disso: só questões e descanso
+    "max_dias_sem_ver": "10",           # nenhuma aula (já iniciada) deve ficar mais que isso sem leitura
+    "meta_questoes_dia": "10",
 }
 
 
@@ -553,37 +556,122 @@ def humor_por_pct(pct, meta):
     return "furioso"
 
 
-def resumo_semana():
+def _data_cfg(cfg, chave):
+    try:
+        return date.fromisoformat(cfg[chave])
+    except (KeyError, ValueError, TypeError):
+        return date.fromisoformat(DEFAULTS[chave])
+
+
+def plano_do_dia():
+    """Meta diária de leituras (5x por aula até a data limite) e a fila de aulas de hoje.
+
+    - meta de hoje = leituras que faltavam no início do dia / dias até a data limite (inclusive hoje)
+    - fila: aula da matéria há mais tempo sem ser vista; aulas já iniciadas perto de
+      completar o máximo de dias sem leitura passam na frente."""
+    cfg = configs()
+    alvo = max(1, int(cfg_num(cfg, "meta_leituras_por_aula")))
+    max_dias = max(1, int(cfg_num(cfg, "max_dias_sem_ver")))
+    limite = _data_cfg(cfg, "data_limite_leituras")
+    h = hoje()
+    ini = dt0(h)
+    aulas = Aula.query.join(Materia).order_by(Materia.ordem, Aula.ordem, Aula.id).all()
+
+    est = {}
+    for a in aulas:
+        datas = [l.lida_em for l in a.leituras]
+        antes = [d for d in datas if d < ini]
+        est[a.id] = {"n": len(datas), "n_antes": len(antes), "ultima": max(datas) if datas else None,
+                     "hoje": len(datas) - len(antes)}
+    restante = sum(max(0, alvo - e["n"]) for e in est.values())
+    restante_inicio = sum(max(0, alvo - e["n_antes"]) for e in est.values())
+    feitas_hoje = restante_inicio - restante  # leituras de hoje que contaram para a meta
+    dias = (limite - h).days + 1
+    fase = "leitura" if dias > 0 else "questoes"
+    meta_hoje = math.ceil(restante_inicio / dias) if fase == "leitura" and restante_inicio else 0
+
+    def dias_sem(a):
+        u = est[a.id]["ultima"]
+        return (h - u.date()).days if u else None
+
+    atrasadas = [a for a in aulas if 0 < est[a.id]["n"] < alvo and dias_sem(a) is not None and dias_sem(a) > max_dias]
+    atrasadas.sort(key=lambda a: -dias_sem(a))
+
+    # última vez que cada matéria foi vista
+    ultima_mat = {}
+    for a in aulas:
+        u = est[a.id]["ultima"]
+        if u and (a.materia_id not in ultima_mat or u > ultima_mat[a.materia_id]):
+            ultima_mat[a.materia_id] = u
+
+    fila = []
+    if fase == "leitura":
+        cands = [a for a in aulas if est[a.id]["n"] < alvo and est[a.id]["hoje"] == 0]
+        vagas = max(0, meta_hoje - feitas_hoje)
+        marca = agora()
+        planejadas = set()
+        while cands:
+            urgentes = [a for a in cands if est[a.id]["n"] > 0 and dias_sem(a) >= max_dias - 2]
+            if len(fila) >= vagas and not urgentes:
+                break  # meta cumprida; aulas perto do limite de dias entram mesmo assim
+            if urgentes:
+                a = max(urgentes, key=lambda x: (dias_sem(x), -est[x.id]["n"]))
+                d = dias_sem(a)
+                motivo = f"sem leitura há {d} dias" + (" — passou do limite!" if d > max_dias else "")
+                urg = True
+            else:
+                mid = min({x.materia_id for x in cands}, key=lambda m: ultima_mat.get(m) or datetime.min)
+                a = min((x for x in cands if x.materia_id == mid),
+                        key=lambda x: (est[x.id]["n"], est[x.id]["ultima"] or datetime.min, x.ordem or 0, x.id))
+                um = ultima_mat.get(mid)
+                if mid in planejadas:
+                    motivo = "rodízio entre as matérias"
+                elif um is None:
+                    motivo = "matéria ainda não estudada"
+                else:
+                    d = (h - um.date()).days
+                    motivo = "matéria estudada hoje" if d == 0 else f"matéria parada há {d} dia{'s' if d > 1 else ''}"
+                urg = False
+            fila.append({"aula": a, "vez": est[a.id]["n"] + 1, "motivo": motivo, "urgente": urg})
+            cands.remove(a)
+            marca += timedelta(seconds=1)
+            ultima_mat[a.materia_id] = marca  # próxima sugestão vai para outra matéria
+            planejadas.add(a.materia_id)
+
+    total_necessario = alvo * len(aulas)
+    return {"alvo": alvo, "limite": limite, "dias": max(dias, 0), "fase": fase, "max_dias": max_dias,
+            "restante": restante, "meta_hoje": meta_hoje, "feitas_hoje": feitas_hoje, "fila": fila,
+            "atrasadas": atrasadas, "est": est, "total_aulas": len(aulas),
+            "total_necessario": total_necessario, "total_feito": total_necessario - restante}
+
+
+def resumo_dia():
     cfg = configs()
     h = hoje()
-    ini = dt0(inicio_semana(h))
-    leit = Leitura.query.filter(Leitura.lida_em >= ini).count()
-    tents = Tentativa.query.filter(Tentativa.feita_em >= ini).all()
+    tents_hoje = Tentativa.query.filter(Tentativa.feita_em >= dt0(h)).all()
     rec = Tentativa.query.filter(Tentativa.feita_em >= dt0(h - timedelta(days=6))).all()
     r_resp = sum(t.respondidas for t in rec)
     return {
-        "leituras": leit,
-        "meta_leituras": int(cfg_num(cfg, "meta_leituras_semana")),
-        "questoes": sum(t.respondidas for t in tents),
-        "meta_questoes": int(cfg_num(cfg, "meta_questoes_semana")),
+        "plano": plano_do_dia(),
+        "questoes": sum(t.respondidas for t in tents_hoje),
+        "meta_questoes": int(cfg_num(cfg, "meta_questoes_dia")),
         "acerto7": round(100 * sum(t.acertos for t in rec) / r_resp, 1) if r_resp else None,
         "meta_acerto": cfg_num(cfg, "meta_acerto"),
-        "fracao_semana": (h.weekday() + 1) / 7,
     }
 
 
 def calcular_humor():
-    s = resumo_semana()
+    s = resumo_dia()
+    p = s["plano"]
     dias = dias_atividade()
     h = hoje()
     if not dias:
         return {"humor": "neutro", "titulo": "Oi! Eu sou o Tatti",
-                "fala": "Vou acompanhar seus estudos. Bata as metas e eu fico feliz; "
+                "fala": "Vou acompanhar seus estudos. Bata a meta do dia e eu fico feliz; "
                         "suma e eu fico bravo. Comece enviando o PDF da primeira aula!",
-                "motivos": [], "semana": s}
+                "motivos": [], "dia": s}
     motivos, pts = [], 0
     sem = (h - max(dias)).days
-
     if sem == 0:
         pts += 2
         motivos.append((True, "Você estudou hoje"))
@@ -592,6 +680,25 @@ def calcular_humor():
     else:
         pts -= 3
         motivos.append((False, f"{sem} dias sem estudar"))
+
+    if p["fase"] == "leitura" and p["total_aulas"]:
+        if p["meta_hoje"] == 0:
+            pts += 3
+            motivos.append((True, "Todas as aulas já foram lidas 5x"))
+        elif p["feitas_hoje"] >= p["meta_hoje"]:
+            pts += 3
+            motivos.append((True, f"Meta de leituras de hoje batida ({p['feitas_hoje']}/{p['meta_hoje']})"))
+        elif p["feitas_hoje"] * 2 >= p["meta_hoje"]:
+            pts += 1
+            motivos.append((False, f"{p['feitas_hoje']}/{p['meta_hoje']} leituras hoje — falta pouco"))
+        else:
+            motivos.append((False, f"{p['feitas_hoje']}/{p['meta_hoje']} leituras hoje"))
+        if p["atrasadas"]:
+            pts -= 2
+            n = len(p["atrasadas"])
+            motivos.append((False, f"{n} aula{'s' if n > 1 else ''} há mais de {p['max_dias']} dias sem leitura"))
+    elif p["fase"] == "leitura":
+        motivos.append((False, "Envie as aulas em PDF para eu montar sua meta diária"))
 
     meta = s["meta_acerto"]
     if s["acerto7"] is None:
@@ -606,49 +713,46 @@ def calcular_humor():
         pts -= 3
         motivos.append((False, f"Acerto de {s['acerto7']:.0f}%: bem abaixo da meta de {meta:.0f}%"))
 
-    for chave, meta_k, nome in (("leituras", "meta_leituras", "leituras"),
-                                ("questoes", "meta_questoes", "questões")):
-        alvo = s[meta_k]
-        esperado = max(1, round(alvo * s["fracao_semana"]))
-        feito = s[chave]
-        if feito >= alvo:
+    if s["meta_questoes"]:
+        if s["questoes"] >= s["meta_questoes"]:
             pts += 2
-            motivos.append((True, f"Meta semanal de {nome} batida ({feito}/{alvo})"))
-        elif feito >= esperado:
+            motivos.append((True, f"Meta de questões de hoje batida ({s['questoes']}/{s['meta_questoes']})"))
+        elif s["questoes"]:
             pts += 1
-            motivos.append((True, f"{feito}/{alvo} {nome} na semana — no ritmo"))
-        elif feito >= esperado / 2:
-            motivos.append((False, f"{feito}/{alvo} {nome} na semana — esperado {esperado} até hoje"))
-        else:
-            pts -= 2
-            motivos.append((False, f"{feito}/{alvo} {nome} na semana — atrasado (esperado {esperado})"))
+            motivos.append((False, f"{s['questoes']}/{s['meta_questoes']} questões hoje"))
 
     if sem >= 3:
         humor = "furioso"
-    elif pts >= 7:
+    elif pts >= 8:
         humor = "radiante"
-    elif pts >= 3:
+    elif pts >= 4:
         humor = "feliz"
-    elif pts >= 0:
+    elif pts >= 1:
         humor = "neutro"
-    elif pts >= -4:
+    elif pts >= -3:
         humor = "bravo"
     else:
         humor = "furioso"
     return {"humor": humor, "titulo": TITULOS[humor], "fala": random.choice(FALAS[humor]),
-            "motivos": motivos, "semana": s}
+            "motivos": motivos, "dia": s}
 
 
 def stats_materia(m):
     tents = Tentativa.query.filter_by(materia_id=m.id).order_by(Tentativa.feita_em).all()
     resp = sum(t.respondidas for t in tents)
     lidas = sum(1 for a in m.aulas if a.leituras)
+    alvo = max(1, int(cfg_num(configs(), "meta_leituras_por_aula")))
+    feitas = sum(min(len(a.leituras), alvo) for a in m.aulas)
     lidos_top = {a.topico_id for a in m.aulas if a.leituras and a.topico_id}
     return {
         "aulas": len(m.aulas),
         "aulas_lidas": lidas,
         "leituras": sum(len(a.leituras) for a in m.aulas),
         "pct_aulas": round(100 * lidas / len(m.aulas)) if m.aulas else 0,
+        "alvo": alvo,
+        "leituras_meta": feitas,
+        "leituras_total_meta": alvo * len(m.aulas),
+        "pct_meta": round(100 * feitas / (alvo * len(m.aulas))) if m.aulas else 0,
         "topicos_lidos": lidos_top,
         "tentativas": len(tents),
         "questoes": resp,
@@ -726,7 +830,10 @@ def index():
     xp = xp_total()
     tot_aulas = sum(s["aulas"] for _, s in trilha)
     tot_lidas = sum(s["aulas_lidas"] for _, s in trilha)
+    dias_sem = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+    h0 = hoje()
     return render_template("index.html", trilha=trilha, h=calcular_humor(), xp=xp, nv=nivel(xp),
+                           hoje_str=f"{dias_sem[h0.weekday()]}, {h0.strftime('%d/%m')}",
                            streak=ofensiva(), tot_aulas=tot_aulas, tot_lidas=tot_lidas)
 
 
@@ -1079,11 +1186,11 @@ def metas():
             v = request.form.get(k, "").strip()
             if not v:
                 continue
-            if k == "data_prova":
+            if k.startswith("data_"):
                 try:
                     date.fromisoformat(v)
                 except ValueError:
-                    flash("Data da prova inválida.", "erro")
+                    flash("Data inválida.", "erro")
                     continue
             elif k != "nome":
                 try:
