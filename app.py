@@ -849,7 +849,7 @@ def calcular_humor():
         g.humor_atual = "neutro"
         return {"humor": "neutro", "titulo": "Oi! Eu sou a Tatti",
                 "fala": "Vou acompanhar seus estudos. Bata a meta do dia e eu fico feliz; "
-                        "suma e eu fico brava. Comece enviando o PDF da primeira aula!",
+                        "suma e eu fico brava. Comece pela Meta de hoje!",
                 "motivos": [], "dia": s}
     motivos, pts = [], 0
     sem = (h - max(dias)).days
@@ -879,7 +879,7 @@ def calcular_humor():
             n = len(p["atrasadas"])
             motivos.append((False, f"{n} aula{'s' if n > 1 else ''} há mais de {p['max_dias']} dias sem leitura"))
     elif p["fase"] == "leitura":
-        motivos.append((False, "Envie as aulas em PDF para eu montar sua meta diária"))
+        motivos.append((False, "Nenhuma aula cadastrada para montar a meta diária"))
 
     meta = s["meta_acerto"]
     if s["acerto7"] is None:

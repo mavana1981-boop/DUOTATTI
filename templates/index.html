@@ -82,7 +82,7 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
   <p style="font-weight:800;margin:10px 0">Fase final: questões e descanso.</p>
   <p class="mut" style="margin-top:0">O prazo das leituras ({{ p.limite.strftime('%d/%m') }}) já passou. Agora é revisar com questões e chegar descansado à prova.</p>
   {% elif not p.total_aulas %}
-  <p class="mut">Envie as aulas em PDF (em cada matéria) e eu calculo quantas leituras você precisa fazer por dia.</p>
+  <p class="mut">Nenhuma aula cadastrada ainda.</p>
   {% else %}
   <div class="ritmo">
     <div><b>{{ p.meta_hoje }}</b><small>aula{{ '' if p.meta_hoje == 1 else 's' }} por dia</small></div>
@@ -145,7 +145,8 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
         {% for c in it.cadernos[:3] %}
         <a class="btn mini ouro" href="{{ url_for('caderno_resolver', cid=c.id) }}">{{ c.titulo[:40] }} ({{ c.total }})</a>
         {% else %}
-        <a class="btn mini azul" href="{{ url_for('materia', mid=it.materia.id) }}#questoes">Enviar caderno desse item</a>
+        <a class="btn mini azul" href="{{ url_for('materia', mid=it.materia.id) }}#questoes">Ver questões de {{ it.materia.nome }}</a>
+        <small class="mut" style="flex-basis:100%">Nenhum caderno vinculado a este item — vincule um caderno ao item na lista de questões da matéria.</small>
         {% endfor %}
       </div>
     </div>

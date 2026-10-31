@@ -93,8 +93,8 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
 
 <section class="card" id="aulas">
   <div class="row"><h2 style="margin:0">Aulas em PDF</h2><span class="tag right">{{ s.aulas }}</span></div>
-  <details class="box" {{ 'open' if not m.aulas }}>
-    <summary>+ Enviar aulas (PDF)</summary>
+  <details class="box">
+    <summary>+ Adicionar mais aulas (opcional)</summary>
     <form method="post" action="{{ url_for('aula_nova', mid=m.id) }}" enctype="multipart/form-data">
       <label class="f">Arquivos PDF</label>
       <input type="file" name="pdfs" accept="application/pdf,.pdf" multiple required>
@@ -139,7 +139,7 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
     </form>
   </div>
   {% else %}
-  <p class="mut">Nenhuma aula ainda. Envie o primeiro PDF acima.</p>
+  <p class="mut">Nenhuma aula nesta matéria.</p>
   {% endfor %}
   </div>
   {% if m.aulas|length > 1 %}<p class="hint" id="dica-ordem">Arraste pela alça ⠿ ou use ▲▼ para mudar a ordem das aulas.</p>{% endif %}
@@ -147,8 +147,8 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
 
 <section class="card" id="questoes">
   <div class="row"><h2 style="margin:0">Questões</h2><span class="tag right">{{ m.cadernos|length }} caderno{{ '' if m.cadernos|length == 1 else 's' }}</span></div>
-  <details class="box" {{ 'open' if not m.cadernos }}>
-    <summary>+ Novo caderno de questões</summary>
+  <details class="box">
+    <summary>+ Adicionar caderno de questões (opcional)</summary>
     <form method="post" action="{{ url_for('caderno_novo', mid=m.id) }}" enctype="multipart/form-data">
       <label class="f">PDF das questões</label>
       <input type="file" name="pdf_questoes" accept="application/pdf,.pdf" required>

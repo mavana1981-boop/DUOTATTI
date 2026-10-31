@@ -148,7 +148,7 @@
           style="--p:{{ pc }}%" data-titulo="{{ a.titulo }}"
           title="Aula {{ loop.index }}: {{ a.titulo }} — {{ n }}/{{ s.alvo }} leituras"
           aria-label="Aula {{ loop.index }}: {{ a.titulo }}, {{ n }} de {{ s.alvo }} leituras">{{ loop.index }}</button>
-        {% else %}<a class="mut" href="{{ url_for('materia', mid=m.id) }}#aulas" style="font-size:.82rem">nenhuma aula enviada</a>{% endfor %}
+        {% else %}<span class="mut" style="font-size:.82rem">sem aulas</span>{% endfor %}
         {% if m.aulas %}<small class="mut cont" data-m="{{ m.id }}" title="aulas lidas {{ s.alvo }}x">{{ s.aulas_completas }}/{{ s.aulas }}</small>{% endif %}
       </span>
       <span>{{ s.questoes }}</span>
@@ -191,7 +191,7 @@
           <option value="">Assunto não definido</option>{{ opcoes(m, c.topico_id) }}</select>
       </div>
       {% else %}
-      <p class="mut">Nenhum caderno de questões nesta matéria. <a href="{{ url_for('materia', mid=m.id) }}#questoes">Enviar questões</a></p>
+      <p class="mut">Nenhum caderno de questões nesta matéria.</p>
       {% endfor %}
       {% if m.cadernos %}
       <h3>Desempenho por assunto</h3>
