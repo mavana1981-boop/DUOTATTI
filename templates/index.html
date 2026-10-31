@@ -21,6 +21,14 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
 .ritmo>div b{display:block;font-size:2.2rem;font-weight:900;color:var(--blue)}
 .ritmo>div small{font-weight:800;color:var(--mut);font-size:.75rem}
 .ritmo p{margin:0;font-size:.92rem}
+.bateria{margin-top:14px;padding-top:12px;border-top:2px dashed var(--line)}
+.bateria h3,.hojecard h3.sec{font-size:1rem;font-weight:900}
+.item-dia{border:2px solid color-mix(in srgb,var(--c) 45%,transparent);background:color-mix(in srgb,var(--c) 8%,transparent);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}
+.item-dia>small:first-child{font-weight:800;color:var(--c);font-size:.75rem;text-transform:uppercase;letter-spacing:.03em}
+.alt{margin-top:8px}.alt summary{cursor:pointer;font-weight:800;font-size:.85rem;color:var(--mut)}
+.alt ul{list-style:none;margin:6px 0 0;padding:0}.alt li{display:flex;gap:8px;padding:4px 0;font-size:.88rem}
+.alt li i{flex:none;width:10px;height:10px;border-radius:50%;background:var(--c);margin-top:5px}
+.btn-tut{margin-top:12px}
 .alerta{border:2px solid var(--err);background:color-mix(in srgb,var(--err) 9%,transparent);border-radius:14px;padding:10px 12px;margin-bottom:12px;font-size:.92rem}
 .fila-t{font-size:.95rem;font-weight:900;margin:4px 0 6px}
 .fila{list-style:none;margin:0;padding:0;counter-reset:f}
@@ -40,12 +48,16 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
   <div class="balao">
     <h2 style="margin:0 0 4px">{{ h.titulo }}</h2>
     <p style="margin:0;font-weight:700">{{ h.fala }}</p>
+    {% if not h.motivos %}
+    <button type="button" class="btn ouro btn-tut" data-tutorial>Tutorial rápido (1 min)</button>
+    {% endif %}
     {% if h.motivos %}
     <ul class="motivos">
       {% for ok, txt in h.motivos %}
       <li><span class="ic {{ 's' if ok else 'n' }}">{{ '✓' if ok else '!' }}</span><span>{{ txt }}</span></li>
       {% endfor %}
     </ul>
+    <button type="button" class="btn claro mini btn-tut" data-tutorial>Ver tutorial rápido</button>
     {% endif %}
   </div>
 </section>
@@ -78,7 +90,7 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
       <span class="mut">(ritmo exato: {{ '%.1f'|format(p.ritmo)|replace('.', ',') }} leituras/dia)</span></p>
   </div>
   {% set pl = [100, (100 * p.feitas_hoje / p.meta_hoje) if p.meta_hoje else 100]|min %}
-  <div class="row" style="margin-top:10px"><b>Leituras de aula</b><span class="right mut"><b style="color:var(--ink)">{{ p.feitas_hoje }}</b>/{{ p.meta_hoje }}</span></div>
+  <div class="row" style="margin-top:10px"><b>Leituras de aula de hoje</b><span class="right mut"><b style="color:var(--ink)">{{ p.feitas_hoje }}</b>/{{ p.meta_hoje }}</span></div>
   <div class="bar azul" style="margin:6px 0 6px"><i style="width:{{ pl|round }}%"></i></div>
   <p class="hint" style="margin:0 0 12px">Faltam <b>{{ p.aulas_faltando }}</b> aula{{ '' if p.aulas_faltando == 1 else 's' }} e <b>{{ p.restante }}</b> leitura{{ '' if p.restante == 1 else 's' }} para ler cada aula {{ p.alvo }}x até <b>{{ p.limite.strftime('%d/%m') }}</b>
     ({{ p.dias }} dia{{ '' if p.dias == 1 else 's' }}, contando hoje). A meta é recalculada todo dia conforme o que você já leu.</p>
@@ -112,9 +124,38 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
   {% endif %}
   {% endif %}
 
-  {% set pq = [100, (100 * s.questoes / s.meta_questoes) if s.meta_questoes else 100]|min %}
-  <div class="row" style="margin-top:14px"><b>Questões resolvidas</b><span class="right mut"><b style="color:var(--ink)">{{ s.questoes }}</b>/{{ s.meta_questoes }}</span></div>
-  <div class="bar" style="margin:6px 0 12px"><i style="width:{{ pq|round }}%"></i></div>
+  {% set b = s.bateria %}
+  <div class="bateria" id="bateria">
+    {% set pq = [100, (100 * b.feitas / b.meta) if b.meta else 100]|min %}
+    <div class="row"><h3 style="margin:0">+ 1 bateria de {{ b.meta }} questões</h3>
+      <span class="right mut"><b style="color:var(--ink)">{{ b.feitas }}</b>/{{ b.meta }}</span></div>
+    <div class="bar" style="margin:6px 0 10px"><i style="width:{{ pq|round }}%"></i></div>
+    {% if b.feitas >= b.meta %}
+    <p style="font-weight:800;color:var(--ok);margin:0 0 8px">Bateria de hoje concluída: {{ b.acertos }}/{{ b.feitas }} acertos{% if b.feitas %} ({{ (100 * b.acertos / b.feitas)|round|int }}%){% endif %}.</p>
+    {% endif %}
+    {% if b.item %}{% set it = b.item %}
+    <div class="item-dia" style="--c:{{ it.materia.cor }}">
+      <small>Item do edital de hoje · {{ it.materia.nome }}</small>
+      <b>{{ it.grupo }}</b>
+      <small class="mut">
+        {% if it.ultimo %}últimas questões desse item em {{ it.ultimo.strftime('%d/%m') }}{% else %}nenhuma questão desse item ainda{% endif %}
+        {% if not it.lido %} · ainda sem aula lida desse item{% endif %}
+      </small>
+      <div class="row" style="margin-top:8px;gap:8px">
+        {% for c in it.cadernos[:3] %}
+        <a class="btn mini ouro" href="{{ url_for('caderno_resolver', cid=c.id) }}">{{ c.titulo[:40] }} ({{ c.total }})</a>
+        {% else %}
+        <a class="btn mini azul" href="{{ url_for('materia', mid=it.materia.id) }}#questoes">Enviar caderno desse item</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% if b.alternativas %}
+    <details class="alt"><summary>Próximos itens do rodízio</summary>
+      <ul>{% for a in b.alternativas %}<li style="--c:{{ a.materia.cor }}"><i></i><span><b>{{ a.grupo }}</b> <small class="mut">· {{ a.materia.nome }}{% if a.ultimo %} · últimas em {{ a.ultimo.strftime('%d/%m') }}{% endif %}</small></span></li>{% endfor %}</ul>
+    </details>
+    {% endif %}
+    {% endif %}
+  </div>
   <div class="row"><b>Acerto nos últimos 7 dias</b><span class="right mut">{{ s.acerto7|pct }} de {{ s.meta_acerto|pct }}</span></div>
   <div class="bar {{ 'vermelho' if s.acerto7 is not none and s.acerto7 < s.meta_acerto else 'ouro' }}" style="margin-top:6px">
     <i style="width:{{ ([100, 100 * (s.acerto7 or 0) / s.meta_acerto]|min)|round if s.meta_acerto else 0 }}%"></i></div>
@@ -135,4 +176,7 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
   </a>
   {% endfor %}
 </div>
+{% endblock %}
+{% block js %}
+{% include "_tutorial.html" %}
 {% endblock %}

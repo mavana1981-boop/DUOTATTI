@@ -1,0 +1,119 @@
+{# Tutorial rápido da Tatti (5 passos). Abre sozinho na 1ª visita; depois pelo botão do card. #}
+<style>
+.tut-fundo{position:fixed;inset:0;z-index:50;background:rgba(15,18,28,.55);display:grid;place-items:center;padding:16px}
+.tut-fundo[hidden]{display:none}
+.tut{background:var(--card);color:var(--ink);border:2px solid var(--line);border-radius:22px;width:min(520px,100%);max-height:calc(100vh - 32px);overflow:auto;
+  padding:20px 20px 16px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.tut-topo{display:flex;gap:14px;align-items:center;margin-bottom:8px}
+.tut-topo img{flex:none;width:84px;height:84px;border-radius:18%;background:#fff;box-shadow:0 2px 0 var(--line)}
+.tut h2{font-size:1.25rem;margin:0}
+.tut .passo-n{font-size:.75rem;font-weight:900;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+.tut p,.tut li{font-size:.95rem}
+.tut ol,.tut ul{padding-left:20px;margin:8px 0}
+.tut li{margin:4px 0}
+.tut .caminho{display:inline-block;background:var(--soft);border-radius:8px;padding:1px 7px;font-weight:800;font-size:.88rem}
+.tut .destaque{border:2px solid color-mix(in srgb,var(--blue) 35%,transparent);background:color-mix(in srgb,var(--blue) 8%,transparent);border-radius:14px;padding:10px 12px;margin:10px 0}
+.tut .destaque.q{border-color:color-mix(in srgb,var(--xp) 50%,transparent);background:color-mix(in srgb,var(--xp) 12%,transparent)}
+.tut-pts{display:flex;gap:6px;justify-content:center;margin:12px 0 10px}
+.tut-pts i{width:9px;height:9px;border-radius:50%;background:var(--line)}
+.tut-pts i.on{background:var(--ok);width:22px;border-radius:9px}
+.tut-acoes{display:flex;gap:8px;align-items:center}
+.tut-acoes .pular{background:none;border:0;color:var(--mut);font:inherit;font-weight:800;cursor:pointer;padding:8px}
+.tut-passo[hidden]{display:none}
+</style>
+
+<div class="tut-fundo" id="tutorial" hidden>
+  <div class="tut" role="dialog" aria-modal="true" aria-labelledby="tut-titulo">
+
+    <section class="tut-passo" data-av="neutro">
+      <div class="tut-topo"><img alt=""><div><div class="passo-n">Passo 1 de 5</div><h2 id="tut-titulo">Oi! Eu sou a Tatti</h2></div></div>
+      <p>Vou acompanhar seus estudos até a prova do TJSP ({{ cfg.data_prova[8:10] }}/{{ cfg.data_prova[5:7] }}). Meu humor muda conforme você cumpre as metas: fico <b>radiante</b> quando você bate tudo e <b>furiosa</b> se você some.</p>
+      <div class="destaque"><b>A metodologia é simples. Todo dia:</b>
+        <ol style="margin-bottom:0"><li>as <b>leituras de aula</b> da meta de hoje;</li><li><b>+ 1 bateria de {{ [60, cfg.meta_questoes_dia|int]|max }} questões</b>, num item do edital.</li></ol></div>
+    </section>
+
+    <section class="tut-passo" data-av="neutro" hidden>
+      <div class="tut-topo"><img alt=""><div><div class="passo-n">Passo 2 de 5</div><h2>Onde ler as aulas</h2></div></div>
+      <ol>
+        <li>Em <span class="caminho">Aprender</span>, toque na <b>matéria</b> (ex.: Direito Penal).</li>
+        <li>Em <span class="caminho">Aulas em PDF › + Enviar aulas</span>, envie os PDFs e vincule cada aula aos itens do edital.</li>
+        <li>Toque em <span class="caminho">Ler</span>: o PDF abre no app.</li>
+        <li>Terminou? Toque em <span class="caminho">Concluí a 1ª leitura</span>. Eu registro a data e a vez.</li>
+      </ol>
+      <p class="mut" style="margin:0">Atalho: na <b>Meta de hoje</b>, cada aula sugerida já tem o botão <b>Ler</b>. Na <b>Evolução</b>, as bolinhas também registram leituras.</p>
+    </section>
+
+    <section class="tut-passo" data-av="feliz" hidden>
+      <div class="tut-topo"><img alt=""><div><div class="passo-n">Passo 3 de 5</div><h2>Meta de hoje: leituras</h2></div></div>
+      <ul>
+        <li>Cada aula deve ser lida <b>{{ cfg.meta_leituras_por_aula }}x</b> até <b>{{ cfg.data_limite_leituras[8:10] }}/{{ cfg.data_limite_leituras[5:7] }}</b>. Os últimos dias antes da prova ficam para questões e descanso.</li>
+        <li>Eu somo as leituras que faltam em <b>todas as matérias</b> e divido pelos dias restantes. Atrasou? A meta sobe. Adiantou? Ela desce.</li>
+        <li>A lista <b>Próximas leituras</b> intercala as matérias, começando pela que está parada há mais tempo. Nenhuma aula fica mais de <b>{{ cfg.max_dias_sem_ver }} dias</b> sem leitura.</li>
+      </ul>
+    </section>
+
+    <section class="tut-passo" data-av="feliz" hidden>
+      <div class="tut-topo"><img alt=""><div><div class="passo-n">Passo 4 de 5</div><h2>+ 1 bateria de {{ [60, cfg.meta_questoes_dia|int]|max }} questões</h2></div></div>
+      <div class="destaque q">Todo dia, <b>obrigatoriamente</b>, uma bateria de <b>{{ [60, cfg.meta_questoes_dia|int]|max }} questões</b>. Eu escolho o <b>item do edital</b> que está há mais tempo sem questões, de preferência um cujas aulas você já leu. Assim os itens vão se alternando.</div>
+      <ol>
+        <li>Na matéria, em <span class="caminho">Questões › + Novo caderno</span>, envie o PDF das questões e o gabarito, e vincule ao item do edital.</li>
+        <li>Resolva no <b>cartão-resposta</b> e toque em <span class="caminho">Corrigir</span>.</li>
+        <li>A meta de acerto é <b>{{ cfg.meta_acerto }}%</b>. Abaixo disso, eu fico brava.</li>
+      </ol>
+    </section>
+
+    <section class="tut-passo" data-av="radiante" hidden>
+      <div class="tut-topo"><img alt=""><div><div class="passo-n">Passo 5 de 5</div><h2>Acompanhe e ajuste</h2></div></div>
+      <ul>
+        <li><span class="caminho">Evolução</span>: calendário com leituras feitas e previstas, acerto por bateria e o progresso de cada aula (5 bolinhas).</li>
+        <li><span class="caminho">Metas</span>: ajuste as leituras por aula, a data limite, a meta de acerto e o tamanho da bateria (mínimo de 60).</li>
+      </ul>
+      <p style="font-weight:800;margin-bottom:0">Pronto! Comece pela <b>Meta de hoje</b>. Bora pro cargo?</p>
+    </section>
+
+    <div class="tut-pts" aria-hidden="true"></div>
+    <div class="tut-acoes">
+      <button type="button" class="pular" data-pular>Pular</button>
+      <button type="button" class="btn claro mini right" data-voltar>Voltar</button>
+      <button type="button" class="btn mini" data-proximo>Próximo</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const fundo = document.getElementById('tutorial'); if (!fundo) return;
+  const passos = [...fundo.querySelectorAll('.tut-passo')], pts = fundo.querySelector('.tut-pts');
+  const AV = "{{ url_for('static', filename='avatar/') }}";
+  const btnV = fundo.querySelector('[data-voltar]'), btnP = fundo.querySelector('[data-proximo]');
+  let i = 0, anterior = null;
+  pts.innerHTML = passos.map(() => '<i></i>').join('');
+  passos.forEach(p => p.querySelector('img').src = AV + p.dataset.av + '.png');
+  function mostra(n) {
+    i = Math.max(0, Math.min(passos.length - 1, n));
+    passos.forEach((p, k) => p.hidden = k !== i);
+    [...pts.children].forEach((d, k) => d.classList.toggle('on', k === i));
+    btnV.style.visibility = i ? 'visible' : 'hidden';
+    btnP.textContent = i === passos.length - 1 ? 'Começar' : 'Próximo';
+    btnP.focus();
+  }
+  function abre() { anterior = document.activeElement; fundo.hidden = false; document.body.style.overflow = 'hidden'; mostra(0); }
+  function fecha() {
+    fundo.hidden = true; document.body.style.overflow = '';
+    fetch('/api/tutorial-visto', {method:'POST'}).catch(() => {});
+    if (anterior) anterior.focus();
+  }
+  btnP.addEventListener('click', () => i === passos.length - 1 ? fecha() : mostra(i + 1));
+  btnV.addEventListener('click', () => mostra(i - 1));
+  fundo.querySelector('[data-pular]').addEventListener('click', fecha);
+  fundo.addEventListener('click', e => { if (e.target === fundo) fecha(); });
+  document.addEventListener('keydown', e => {
+    if (fundo.hidden) return;
+    if (e.key === 'Escape') fecha();
+    if (e.key === 'ArrowRight') mostra(i + 1);
+    if (e.key === 'ArrowLeft') mostra(i - 1);
+  });
+  document.querySelectorAll('[data-tutorial]').forEach(b => b.addEventListener('click', abre));
+  {% if not cfg.get('tutorial_visto') %}abre();{% endif %}
+})();
+</script>

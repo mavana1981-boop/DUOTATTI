@@ -182,7 +182,7 @@ DEFAULTS = {
     "meta_leituras_por_aula": "5",      # cada aula deve ser lida 5x
     "data_limite_leituras": "2027-03-10",  # depois disso: só questões e descanso
     "max_dias_sem_ver": "10",           # nenhuma aula (já iniciada) deve ficar mais que isso sem leitura
-    "meta_questoes_dia": "10",
+    "meta_questoes_dia": "60",          # bateria diária obrigatória (mínimo 60)
 }
 
 
@@ -362,6 +362,21 @@ def migrar_vinculos_aulas():
     db.session.commit()
 
 
+QUESTOES_MINIMO = 60
+
+
+def ajustar_bateria_minima():
+    """A bateria diária é de no mínimo 60 questões (ajusta valores salvos antes)."""
+    c = db.session.get(Config, "meta_questoes_dia")
+    try:
+        if c and int(float(c.valor)) < QUESTOES_MINIMO:
+            c.valor = str(QUESTOES_MINIMO)
+            db.session.commit()
+    except (TypeError, ValueError):
+        c.valor = str(QUESTOES_MINIMO)
+        db.session.commit()
+
+
 def _preparar_banco():
     if db.engine.dialect.name == "postgresql":
         with db.engine.begin() as conn:
@@ -376,6 +391,7 @@ def _preparar_banco():
     atualizar_topicos_edital()
     assuntos_para_topicos()
     numerar_aulas()
+    ajustar_bateria_minima()
 
 
 def init_db():
@@ -749,6 +765,65 @@ def dados_calendario():
     return {"dias": cal, "marcos": marcos, "hoje": hoje().isoformat()}, proxima
 
 
+def bateria_do_dia():
+    """Bateria diária de questões, alternando os itens do edital.
+
+    Item sugerido = item do edital (macrotópico) há mais tempo sem questões, preferindo itens
+    cujas aulas já foram lidas; o item feito ontem vai para o fim da fila (alternância);
+    desempate: matéria há mais tempo sem questões e ordem do edital.
+    Se já houve questões hoje, mantém o item do dia."""
+    cfg = configs()
+    meta = max(QUESTOES_MINIMO, int(cfg_num(cfg, "meta_questoes_dia")))
+    h = hoje()
+    ini = dt0(h)
+    materias = Materia.query.order_by(Materia.ordem).all()
+    tents = Tentativa.query.order_by(Tentativa.feita_em).all()
+    feitas = sum(t.respondidas for t in tents if t.feita_em >= ini)
+    acertos = sum(t.acertos for t in tents if t.feita_em >= ini)
+
+    ultimo_item, ultimo_mat = {}, {}
+    for t in tents:
+        c = t.caderno
+        ultimo_mat[t.materia_id] = t.feita_em
+        if c and c.topico and c.topico.grupo:
+            ultimo_item[(t.materia_id, c.topico.grupo)] = t.feita_em
+
+    itens = []
+    for m in materias:
+        grupos = []
+        for tp in m.topicos:
+            if tp.personalizado or not tp.grupo or tp.grupo.startswith("Outros"):
+                continue
+            if tp.grupo not in grupos:
+                grupos.append(tp.grupo)
+        lidos = {tp.grupo for a in m.aulas if a.leituras for tp in a.topicos if tp.grupo}
+        for k, gr in enumerate(grupos):
+            cads = [c for c in m.cadernos if c.topico and c.topico.grupo == gr and c.total]
+            itens.append({"materia": m, "grupo": gr, "chave": (m.id, gr), "ordem": (m.ordem, k),
+                          "lido": gr in lidos, "ultimo": ultimo_item.get((m.id, gr)), "cadernos": cads})
+    if not itens:
+        return {"meta": meta, "feitas": feitas, "acertos": acertos, "item": None, "alternativas": []}
+
+    hoje_item = None
+    for t in tents:
+        if t.feita_em >= ini and t.caderno and t.caderno.topico and t.caderno.topico.grupo:
+            hoje_item = (t.materia_id, t.caderno.topico.grupo)
+            break
+
+    def chave(it):
+        return (not it["lido"], it["ultimo"] or datetime.min,
+                ultimo_mat.get(it["materia"].id) or datetime.min, it["ordem"])
+
+    ontem = dt0(h - timedelta(days=1))
+    recente = lambda it: it["ultimo"] is not None and it["ultimo"] >= ontem  # feito ontem: vai para o fim
+    ordenados = (sorted([i for i in itens if i["lido"] and not recente(i)], key=chave)
+                 + sorted([i for i in itens if not i["lido"] and not recente(i)], key=chave)
+                 + sorted([i for i in itens if recente(i)], key=chave))
+    item = next((i for i in itens if i["chave"] == hoje_item), None) or ordenados[0]
+    alternativas = [i for i in ordenados if i is not item][:3]
+    return {"meta": meta, "feitas": feitas, "acertos": acertos, "item": item, "alternativas": alternativas}
+
+
 def resumo_dia():
     cfg = configs()
     h = hoje()
@@ -757,8 +832,9 @@ def resumo_dia():
     r_resp = sum(t.respondidas for t in rec)
     return {
         "plano": plano_do_dia(),
+        "bateria": bateria_do_dia(),
         "questoes": sum(t.respondidas for t in tents_hoje),
-        "meta_questoes": int(cfg_num(cfg, "meta_questoes_dia")),
+        "meta_questoes": max(QUESTOES_MINIMO, int(cfg_num(cfg, "meta_questoes_dia"))),
         "acerto7": round(100 * sum(t.acertos for t in rec) / r_resp, 1) if r_resp else None,
         "meta_acerto": cfg_num(cfg, "meta_acerto"),
     }
@@ -821,10 +897,12 @@ def calcular_humor():
     if s["meta_questoes"]:
         if s["questoes"] >= s["meta_questoes"]:
             pts += 2
-            motivos.append((True, f"Meta de questões de hoje batida ({s['questoes']}/{s['meta_questoes']})"))
+            motivos.append((True, f"Bateria de hoje concluída ({s['questoes']}/{s['meta_questoes']})"))
         elif s["questoes"]:
             pts += 1
-            motivos.append((False, f"{s['questoes']}/{s['meta_questoes']} questões hoje"))
+            motivos.append((False, f"Bateria de hoje: {s['questoes']}/{s['meta_questoes']} questões"))
+        else:
+            motivos.append((False, f"Bateria de {s['meta_questoes']} questões de hoje ainda não feita"))
 
     if sem >= 3:
         humor = "furioso"
@@ -1292,6 +1370,15 @@ def api_ordem_cards():
     return jsonify(ok=True)
 
 
+@app.post("/api/tutorial-visto")
+def api_tutorial_visto():
+    c = db.session.get(Config, "tutorial_visto") or Config(chave="tutorial_visto")
+    c.valor = "1"
+    db.session.add(c)
+    db.session.commit()
+    return jsonify(ok=True)
+
+
 @app.post("/api/caderno/<int:cid>/assunto")
 def api_caderno_assunto(cid):
     c = db.get_or_404(Caderno, cid)
@@ -1362,7 +1449,7 @@ def metas():
                     continue
             elif k != "nome":
                 try:
-                    v = str(max(0, min(1000, int(float(v)))))
+                    v = str(max(QUESTOES_MINIMO if k == "meta_questoes_dia" else 0, min(1000, int(float(v)))))
                 except ValueError:
                     continue
             c = db.session.get(Config, k) or Config(chave=k)

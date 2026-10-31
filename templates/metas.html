@@ -21,8 +21,9 @@
     <h2 style="margin:18px 0 0">Questões</h2>
     <label class="f">Meta de acerto (%)</label>
     <input type="number" name="meta_acerto" min="1" max="100" value="{{ cfg.meta_acerto }}">
-    <label class="f">Questões por dia</label>
-    <input type="number" name="meta_questoes_dia" min="0" value="{{ cfg.meta_questoes_dia }}">
+    <label class="f">Bateria diária de questões (mínimo 60)</label>
+    <input type="number" name="meta_questoes_dia" min="60" value="{{ [60, cfg.meta_questoes_dia|int]|max }}">
+    <p class="hint">Todo dia: leituras da meta + 1 bateria. O item do edital da bateria alterna sozinho.</p>
     <div style="margin-top:14px"><button class="btn">Salvar metas</button></div>
   </form>
   <div class="card">
@@ -46,6 +47,7 @@
       <li><b>Meta diária de leituras</b> = leituras que faltam ÷ dias até {{ cfg.data_limite_leituras[8:10] }}/{{ cfg.data_limite_leituras[5:7] }}. É recalculada todo dia: atrasou, a meta sobe; adiantou, ela desce.</li>
       <li><b>Próxima aula</b>: da matéria há mais tempo sem estudo, intercalando as matérias.</li>
       <li><b>Prioridade</b>: aula já iniciada perto de {{ cfg.max_dias_sem_ver }} dias sem leitura passa na frente.</li>
+      <li><b>Bateria diária</b>: {{ [60, cfg.meta_questoes_dia|int]|max }} questões no item do edital há mais tempo sem questões (de preferência um já lido).</li>
       <li><b>Radiante</b>: estudou hoje, bateu leituras e questões do dia e acerto ≥ {{ cfg.meta_acerto }}%.</li>
       <li><b>Brava</b>: meta do dia longe, aulas paradas há mais de {{ cfg.max_dias_sem_ver }} dias ou acerto baixo.</li>
       <li><b>Furiosa</b>: 3 dias ou mais sem estudar.</li>
