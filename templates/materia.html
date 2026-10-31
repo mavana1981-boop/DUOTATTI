@@ -24,6 +24,8 @@ input[type=text].renomear{flex:1;min-width:0;font:inherit;font-weight:800;paddin
   .aula-acoes .btn{flex:1}
 }
 .excluir{margin:0}
+.cad-acoes{display:flex;align-items:center;gap:4px;flex:none}
+@media (max-width:600px){.item:has(.cad-acoes){flex-wrap:wrap}.cad-acoes{width:100%;padding-left:54px}.cad-acoes .btn{flex:1}}
 select option.com-aula{color:#2563c9;font-weight:700}
 .ordenar{flex:none;display:flex;flex-direction:column;align-items:center;gap:0;margin-right:-4px}
 .seta-o{border:0;background:transparent;color:var(--mut);font-size:.85rem;line-height:1;padding:5px 9px;cursor:pointer;border-radius:6px}
@@ -194,7 +196,23 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
         <option value="">Item do edital / assunto: não definido</option>{{ opcoes(m, c.topico_id) }}
       </select>
     </div>
-    <a class="btn mini {{ 'azul' if andamento else ('claro' if ts else 'ouro') }}" href="{{ url_for('caderno_resolver', cid=c.id) }}">{{ 'Continuar' if andamento else ('Refazer' if ts else 'Resolver') }}</a>
+    <div class="cad-acoes">
+      <a class="btn mini {{ 'azul' if andamento else ('claro' if ts else 'ouro') }}" href="{{ url_for('caderno_resolver', cid=c.id) }}">{{ 'Continuar' if andamento else ('Refazer' if ts else 'Resolver') }}</a>
+      {% if c.tentativas %}
+      <form method="post" action="{{ url_for('caderno_resetar', cid=c.id) }}" class="excluir"
+            onsubmit="return confirm('Resetar “' + {{ c.titulo|tojson|forceescape }} + '”? Todas as baterias e respostas deste caderno serão apagadas. As questões continuam.')">
+        <button class="lixo" title="Resetar caderno (apagar baterias)" aria-label="Resetar caderno {{ c.titulo }}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </form>
+      {% endif %}
+      <form method="post" action="{{ url_for('caderno_excluir', cid=c.id) }}" class="excluir"
+            onsubmit="return confirm('Apagar o caderno “' + {{ c.titulo|tojson|forceescape }} + '”? As questões e todas as baterias dele serão excluídas. Não dá para desfazer.')">
+        <button class="lixo" title="Apagar caderno" aria-label="Apagar caderno {{ c.titulo }}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </form>
+    </div>
   </div>
   {% else %}
   <p class="mut">Nenhum caderno ainda.</p>

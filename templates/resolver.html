@@ -140,6 +140,17 @@
   </form>
   <a class="btn claro mini" href="{{ url_for('caderno_gabarito', cid=c.id) }}"
      onclick="return confirm('A página de edição MOSTRA o gabarito. Abrir mesmo assim?')">Corrigir gabarito (mostra as respostas)</a>
+  <div class="row" style="margin:14px 0 4px;gap:8px">
+    <form method="post" action="{{ url_for('caderno_resetar', cid=c.id) }}"
+          onsubmit="return confirm('Resetar este caderno? Todas as baterias e respostas serão apagadas. As questões continuam.')">
+      <input type="hidden" name="voltar" value="caderno">
+      <button class="btn claro mini" {{ 'disabled' if not c.tentativas }}>Resetar caderno (apagar baterias)</button>
+    </form>
+    <form method="post" action="{{ url_for('caderno_excluir', cid=c.id) }}"
+          onsubmit="return confirm('Apagar este caderno? As questões e todas as baterias serão excluídas. Não dá para desfazer.')">
+      <button class="btn vermelho mini">Apagar caderno</button>
+    </form>
+  </div>
 </details>
 </div>
 {% endblock %}

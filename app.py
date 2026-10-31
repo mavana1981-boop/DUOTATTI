@@ -1500,6 +1500,20 @@ def tentativa_excluir(tid):
     return redirect(url_for("caderno_resolver", cid=cid))
 
 
+@app.post("/caderno/<int:cid>/resetar")
+def caderno_resetar(cid):
+    """Apaga todas as baterias (tentativas) do caderno; as questões continuam."""
+    c = db.get_or_404(Caderno, cid)
+    n = len(c.tentativas)
+    for t in list(c.tentativas):
+        db.session.delete(t)
+    db.session.commit()
+    flash(f"Caderno “{c.titulo}” resetado: {n} bateria(s) apagada(s). Ele volta como nunca resolvido.", "info")
+    destino = request.form.get("voltar")
+    return redirect(url_for("caderno_resolver", cid=cid) if destino == "caderno"
+                    else url_for("materia", mid=c.materia_id) + "#questoes")
+
+
 @app.post("/caderno/<int:cid>/excluir")
 def caderno_excluir(cid):
     c = db.get_or_404(Caderno, cid)
