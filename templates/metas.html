@@ -27,6 +27,16 @@
     <div style="margin-top:14px"><button class="btn">Salvar metas</button></div>
   </form>
   <div class="card">
+    <h2>Leitura das questões com IA</h2>
+    {% if ia.on %}
+    <p style="margin-top:0">Ativada (modelo <b>{{ ia.modelo }}</b>). {{ ia.ok }} de {{ ia.total }} caderno(s) lidos com IA{% if ia.lendo %} · {{ ia.lendo }} em leitura agora{% endif %}{% if ia.erro %} · <span style="color:var(--err)">{{ ia.erro }} com erro</span>{% endif %}.</p>
+    <form method="post" action="{{ url_for('cadernos_ia_todos') }}" style="margin-bottom:16px"
+          onsubmit="return confirm('Ler com IA todos os cadernos que ainda não foram lidos? Isso usa créditos da sua conta da Anthropic.')">
+      <button class="btn azul mini">Ler todos os cadernos com IA</button>
+    </form>
+    {% else %}
+    <p class="hint" style="margin:0 0 16px">Desativada. Para ativar, crie a variável <b>ANTHROPIC_API_KEY</b> no serviço do Railway (Variables) com a sua chave da API da Anthropic.</p>
+    {% endif %}
     <h2>Situação das leituras</h2>
     {% if p.fase == 'questoes' %}
     <p>O prazo das leituras já passou: fase de questões e descanso.</p>

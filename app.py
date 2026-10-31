@@ -22,6 +22,9 @@ from werkzeug.utils import secure_filename
 
 from edital import EDITAL, TODO, chave_legada
 import questoes as QZ
+import ia as IA
+import queue
+import threading
 
 TZ = ZoneInfo("America/Sao_Paulo")
 LETRAS = "ABCDE"
@@ -130,6 +133,9 @@ class Caderno(db.Model):
     topico = db.relationship("Topico")
     gabarito_json = db.Column(db.Text, default="{}")
     criado_em = db.Column(db.DateTime, default=agora)
+    ia_status = db.Column(db.String(20))   # fila | lendo | ok | erro
+    ia_msg = db.Column(db.String(300))
+    ia_inicio = db.Column(db.DateTime)
     questoes = db.relationship("Questao", backref="caderno", order_by="Questao.numero",
                                cascade="all, delete-orphan", lazy="select")
     tentativas = db.relationship("Tentativa", backref="caderno", order_by="Tentativa.feita_em",
@@ -253,7 +259,7 @@ def seed():
     db.session.commit()
 
 
-NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)"), ("aula", "ordem", "INTEGER"), ("tentativa", "finalizada", "BOOLEAN DEFAULT TRUE")]
+NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)"), ("aula", "ordem", "INTEGER"), ("tentativa", "finalizada", "BOOLEAN DEFAULT TRUE"), ("caderno", "ia_status", "VARCHAR(20)"), ("caderno", "ia_msg", "VARCHAR(300)"), ("caderno", "ia_inicio", "TIMESTAMP")]
 
 
 def migrar(conn):
@@ -1174,7 +1180,7 @@ def aula_excluir(aid):
 
 
 # ---- Questões ------------------------------------------------------------- #
-def montar_questoes(c):
+def montar_questoes(c, extra=None):
     """(Re)constrói as questões do caderno a partir do PDF. Retorna quantas ficaram completas."""
     Questao.query.filter_by(caderno_id=c.id).delete()
     gab = c.gabarito
@@ -1187,12 +1193,106 @@ def montar_questoes(c):
         paginas = []
     texto = QZ.cortar_gabarito(QZ.limpar_paginas(paginas), parse_gabarito_texto)
     res = QZ.extrair_questoes(texto, list(gab))
+    for n, q in (extra or {}).items():  # leitura da IA tem prioridade
+        if n in gab and (q["ok"] or not res.get(n, {}).get("ok")):
+            res[n] = q
     for n, q in res.items():
         db.session.add(Questao(caderno_id=c.id, numero=n, fonte=(q["fonte"] or "")[:300], apoio=q["apoio"],
                                enunciado=q["enunciado"], alternativas_json=json.dumps(q["alternativas"], ensure_ascii=False),
                                ok=q["ok"]))
     db.session.commit()
     return sum(1 for q in res.values() if q["ok"])
+
+
+# ---- Leitura com IA (fila em segundo plano) ------------------------------- #
+_fila_ia = queue.Queue()
+_trabalhador = {"t": None}
+
+
+def _processar_ia(cid):
+    c = db.session.get(Caderno, cid)
+    if not c or not c.gabarito:
+        return
+    c.ia_status, c.ia_inicio, c.ia_msg = "lendo", agora(), "Começando a leitura…"
+    db.session.commit()
+
+    def progresso(k, total):
+        c.ia_msg = f"Lendo parte {k} de {total}…"
+        db.session.commit()
+
+    try:
+        res = IA.extrair(c.pdf_questoes, progresso)
+        ok = montar_questoes(c, extra=res)
+        lidas = sum(1 for n, q in res.items() if n in c.gabarito and q["ok"])
+        c = db.session.get(Caderno, cid)
+        c.ia_status = "ok"
+        c.ia_msg = f"{ok} de {c.total} questões prontas ({lidas} lidas pela IA)."
+    except Exception as e:  # noqa: BLE001
+        db.session.rollback()
+        c = db.session.get(Caderno, cid)
+        c.ia_status = "erro"
+        c.ia_msg = f"Erro na leitura com IA: {e.__class__.__name__}: {str(e)[:200]}"
+    db.session.commit()
+
+
+def _loop_ia():
+    while True:
+        cid = _fila_ia.get()
+        with app.app_context():
+            try:
+                _processar_ia(cid)
+            except Exception:  # noqa: BLE001
+                db.session.rollback()
+            finally:
+                db.session.remove()
+
+
+def enfileirar_ia(c):
+    if not IA.disponivel():
+        return False
+    c.ia_status, c.ia_msg, c.ia_inicio = "fila", "Na fila para leitura com IA…", agora()
+    db.session.commit()
+    if _trabalhador["t"] is None or not _trabalhador["t"].is_alive():
+        _trabalhador["t"] = threading.Thread(target=_loop_ia, daemon=True)
+        _trabalhador["t"].start()
+    _fila_ia.put(c.id)
+    return True
+
+
+def ia_ocupada(c):
+    """Leitura em andamento (ignora leituras 'presas' há mais de 30 min, ex.: servidor reiniciou)."""
+    return c.ia_status in ("fila", "lendo") and c.ia_inicio and (agora() - c.ia_inicio) < timedelta(minutes=30)
+
+
+@app.post("/caderno/<int:cid>/ia")
+def caderno_ia(cid):
+    c = db.get_or_404(Caderno, cid)
+    if not IA.disponivel():
+        flash("A IA não está configurada (falta ANTHROPIC_API_KEY no Railway).", "erro")
+    elif not ia_ocupada(c):
+        enfileirar_ia(c)
+        flash("A Tatti está lendo este caderno com IA. Pode levar alguns minutos.", "ok")
+    return redirect(url_for("caderno_resolver", cid=cid))
+
+
+@app.post("/cadernos/ia-todos")
+def cadernos_ia_todos():
+    if not IA.disponivel():
+        flash("A IA não está configurada (falta ANTHROPIC_API_KEY no Railway).", "erro")
+        return redirect(url_for("metas"))
+    n = 0
+    for c in Caderno.query.order_by(Caderno.id).all():
+        if c.gabarito and c.ia_status != "ok" and not ia_ocupada(c):
+            enfileirar_ia(c)
+            n += 1
+    flash(f"{n} caderno(s) na fila de leitura com IA." if n else "Todos os cadernos já foram lidos com IA.", "ok")
+    return redirect(url_for("metas"))
+
+
+@app.get("/api/caderno/<int:cid>/ia")
+def api_caderno_ia(cid):
+    c = db.get_or_404(Caderno, cid)
+    return jsonify(ok=True, status=c.ia_status, msg=c.ia_msg, ocupada=bool(ia_ocupada(c)))
 
 
 @app.post("/materia/<int:mid>/cadernos")
@@ -1224,7 +1324,10 @@ def caderno_novo(mid):
         flash("Caderno criado, mas não consegui ler o gabarito. Digite-o abaixo.", "erro")
         return redirect(url_for("caderno_gabarito", cid=c.id))
     ok = montar_questoes(c)
-    flash(f"Caderno criado: {ok} de {len(gab)} questões reconstruídas. Bons estudos!", "ok" if ok else "erro")
+    if enfileirar_ia(c):
+        flash("Caderno criado. A Tatti está lendo as questões com IA — leva alguns minutos.", "ok")
+    else:
+        flash(f"Caderno criado: {ok} de {len(gab)} questões reconstruídas. Bons estudos!", "ok" if ok else "erro")
     return redirect(url_for("materia", mid=mid) + "#questoes")
 
 
@@ -1244,7 +1347,10 @@ def caderno_gabarito(cid):
             c.gabarito = gab
             db.session.commit()
             ok = montar_questoes(c)
-            flash(f"Gabarito salvo: {len(gab)} questões ({ok} reconstruídas).", "ok")
+            if enfileirar_ia(c):
+                flash(f"Gabarito salvo: {len(gab)} questões. Relendo com IA…", "ok")
+            else:
+                flash(f"Gabarito salvo: {len(gab)} questões ({ok} reconstruídas).", "ok")
             return redirect(url_for("caderno_resolver", cid=cid))
     texto = "\n".join(f"{n}-{l}" for n, l in c.gabarito.items())
     return render_template("gabarito.html", c=c, m=c.materia, texto=texto)
@@ -1271,10 +1377,13 @@ def caderno_resolver(cid):
         return redirect(url_for("caderno_gabarito", cid=cid))
     if not Questao.query.filter_by(caderno_id=c.id).count():
         montar_questoes(c)
+        if IA.disponivel() and not c.ia_status:
+            enfileirar_ia(c)
     qs = Questao.query.filter_by(caderno_id=c.id).order_by(Questao.numero).all()
     aberta = _tentativa_aberta(c)
     return render_template("resolver.html", c=c, m=c.materia, numeros=[q.numero for q in qs],
                            reconstruidas=sum(1 for q in qs if q.ok), aberta=aberta,
+                           ia_on=IA.disponivel(), ia_lendo=bool(ia_ocupada(c)),
                            finalizadas=[t for t in c.tentativas if t.finalizada is not False])
 
 
@@ -1581,7 +1690,12 @@ def metas():
         db.session.commit()
         flash("Metas salvas. A Tatti já está de olho!", "ok")
         return redirect(url_for("metas"))
-    return render_template("metas.html", h=calcular_humor(), p=plano_do_dia())
+    cads = Caderno.query.all()
+    ia_info = {"on": IA.disponivel(), "modelo": IA.modelo(), "total": len(cads),
+               "ok": sum(1 for c in cads if c.ia_status == "ok"),
+               "lendo": sum(1 for c in cads if ia_ocupada(c)),
+               "erro": sum(1 for c in cads if c.ia_status == "erro")}
+    return render_template("metas.html", h=calcular_humor(), p=plano_do_dia(), ia=ia_info)
 
 
 @app.errorhandler(413)

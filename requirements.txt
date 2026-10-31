@@ -5,3 +5,4 @@ psycopg2-binary==2.9.10
 pypdf==5.1.0
 gunicorn==23.0.0
 tzdata==2024.2
+anthropic==2.3.0

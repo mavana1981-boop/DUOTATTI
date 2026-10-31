@@ -52,7 +52,18 @@
 <h1 style="margin-top:4px">{{ c.titulo }}</h1>
 <p class="sub">{{ numeros|length }} questões{% if c.topico %} · {{ c.topico.rotulo }}{% endif %} · meta {{ meta_acerto|pct }}</p>
 
-<section class="qz-card inicio" id="tela-inicio">
+{% if ia_lendo %}
+<section class="qz-card inicio" id="tela-ia">
+  <img src="{{ url_for('static', filename='avatar/feliz.png') }}" alt="">
+  <h2>Estou lendo as questões com IA…</h2>
+  <p class="mut" id="ia-msg">{{ c.ia_msg or 'Na fila…' }}</p>
+  <p class="hint">Cadernos grandes levam alguns minutos. Esta página atualiza sozinha quando terminar.</p>
+</section>
+{% endif %}
+{% if c.ia_status == 'erro' %}
+<div class="flash" style="padding:0;margin:0 0 12px"><div class="erro">{{ c.ia_msg }} — use "Ler este caderno com IA" em Opções do caderno para tentar de novo.</div></div>
+{% endif %}
+<section class="qz-card inicio" id="tela-inicio" {{ 'hidden' if ia_lendo }}>
   <img src="{{ url_for('static', filename='avatar/neutro.png') }}" alt="">
   {% if aberta and aberta.respondidas %}
   <h2>Você tem uma bateria em andamento</h2>
@@ -67,7 +78,10 @@
   <button class="btn ouro" id="btn-comecar">Começar</button>
   {% endif %}
   {% if reconstruidas < numeros|length %}
-  <p class="hint" style="margin-top:14px">{{ reconstruidas }} de {{ numeros|length }} questões foram reconstruídas do PDF. As demais aparecem só com as letras A–E.</p>
+  <p class="hint" style="margin-top:14px">{{ reconstruidas }} de {{ numeros|length }} questões foram reconstruídas do PDF. As demais aparecem só com as letras A–E.
+    {% if ia_on %}Use <b>Ler este caderno com IA</b> (Opções do caderno, abaixo) para melhorar.{% endif %}</p>
+  {% elif c.ia_status == 'ok' %}
+  <p class="hint" style="margin-top:14px">Questões lidas com IA · {{ c.ia_msg }}</p>
   {% endif %}
 </section>
 
@@ -114,8 +128,15 @@
 
 <details class="box" style="margin-top:16px">
   <summary>Opções do caderno</summary>
+  {% if ia_on %}
+  <form method="post" action="{{ url_for('caderno_ia', cid=c.id) }}" style="margin:6px 0 10px">
+    <button class="btn azul mini" {{ 'disabled' if ia_lendo }}>{{ 'Ler de novo com IA' if c.ia_status == 'ok' else 'Ler este caderno com IA' }}</button>
+  </form>
+  {% else %}
+  <p class="hint">Leitura com IA desativada: configure <b>ANTHROPIC_API_KEY</b> no Railway para o app ler as questões com mais precisão.</p>
+  {% endif %}
   <form method="post" action="{{ url_for('caderno_reprocessar', cid=c.id) }}" style="margin:6px 0 10px">
-    <button class="btn claro mini">Reconstruir as questões do PDF de novo</button>
+    <button class="btn claro mini">Reconstruir sem IA (leitor simples)</button>
   </form>
   <a class="btn claro mini" href="{{ url_for('caderno_gabarito', cid=c.id) }}"
      onclick="return confirm('A página de edição MOSTRA o gabarito. Abrir mesmo assim?')">Corrigir gabarito (mostra as respostas)</a>
@@ -124,6 +145,18 @@
 {% endblock %}
 {% block js %}
 <script>
+{% if ia_lendo %}
+(function(){ // acompanha a leitura com IA e recarrega quando terminar
+  const msg = document.getElementById('ia-msg');
+  const t = setInterval(async () => {
+    try {
+      const d = await (await fetch('/api/caderno/{{ c.id }}/ia')).json();
+      if (d.msg) msg.textContent = d.msg;
+      if (!d.ocupada) { clearInterval(t); location.reload(); }
+    } catch (_) {}
+  }, 4000);
+})();
+{% endif %}
 (function(){
   const CID = {{ c.id }}, NUMS = {{ numeros|tojson }}, AV = "{{ url_for('static', filename='avatar/') }}";
   const LET = ['A','B','C','D','E'];
