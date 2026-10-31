@@ -641,7 +641,8 @@ def plano_do_dia():
     total_necessario = alvo * len(aulas)
     return {"alvo": alvo, "limite": limite, "dias": max(dias, 0), "fase": fase, "max_dias": max_dias,
             "restante": restante, "meta_hoje": meta_hoje,
-            "aulas_faltando": sum(1 for e in est.values() if e["n"] < alvo), "feitas_hoje": feitas_hoje, "fila": fila,
+            "aulas_faltando": sum(1 for e in est.values() if e["n"] < alvo),
+            "ritmo": (restante_inicio / dias) if fase == "leitura" and dias > 0 else 0, "feitas_hoje": feitas_hoje, "fila": fila,
             "atrasadas": atrasadas, "est": est, "total_aulas": len(aulas),
             "total_necessario": total_necessario, "total_feito": total_necessario - restante}
 

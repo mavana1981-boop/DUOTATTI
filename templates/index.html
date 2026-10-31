@@ -16,6 +16,11 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
 .anel span{width:44px;height:44px;border-radius:50%;background:var(--card);display:grid;place-items:center;font-weight:900;font-size:.85rem}
 .mat h3{margin:0;font-size:1rem;font-weight:900;line-height:1.2}
 .mat small{color:var(--mut);font-weight:700;display:block}
+.ritmo{display:flex;gap:14px;align-items:center;background:color-mix(in srgb,var(--blue) 9%,transparent);border:2px solid color-mix(in srgb,var(--blue) 35%,transparent);border-radius:16px;padding:12px 14px;margin:10px 0 4px}
+.ritmo>div{flex:none;text-align:center;line-height:1}
+.ritmo>div b{display:block;font-size:2.2rem;font-weight:900;color:var(--blue)}
+.ritmo>div small{font-weight:800;color:var(--mut);font-size:.75rem}
+.ritmo p{margin:0;font-size:.92rem}
 .alerta{border:2px solid var(--err);background:color-mix(in srgb,var(--err) 9%,transparent);border-radius:14px;padding:10px 12px;margin-bottom:12px;font-size:.92rem}
 .fila-t{font-size:.95rem;font-weight:900;margin:4px 0 6px}
 .fila{list-style:none;margin:0;padding:0;counter-reset:f}
@@ -67,6 +72,11 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
   {% elif not p.total_aulas %}
   <p class="mut">Envie as aulas em PDF (em cada matéria) e eu calculo quantas leituras você precisa fazer por dia.</p>
   {% else %}
+  <div class="ritmo">
+    <div><b>{{ p.meta_hoje }}</b><small>aula{{ '' if p.meta_hoje == 1 else 's' }} por dia</small></div>
+    <p>É quanto você precisa ler <b>por dia</b> para fechar <b>{{ p.alvo }}x cada aula</b> até <b>{{ p.limite.strftime('%d/%m') }}</b>
+      <span class="mut">(ritmo exato: {{ '%.1f'|format(p.ritmo)|replace('.', ',') }} leituras/dia)</span></p>
+  </div>
   {% set pl = [100, (100 * p.feitas_hoje / p.meta_hoje) if p.meta_hoje else 100]|min %}
   <div class="row" style="margin-top:10px"><b>Leituras de aula</b><span class="right mut"><b style="color:var(--ink)">{{ p.feitas_hoje }}</b>/{{ p.meta_hoje }}</span></div>
   <div class="bar azul" style="margin:6px 0 6px"><i style="width:{{ pl|round }}%"></i></div>
