@@ -15,7 +15,24 @@
 .bola{width:32px;height:32px;border-radius:50%;border:3px solid var(--c);background:transparent;cursor:pointer;padding:0;
   font:900 .8rem Nunito,sans-serif;color:var(--c);display:grid;place-items:center;transition:transform .1s,background .15s,color .15s}
 .bola:hover{transform:scale(1.12)}
-.bola.cheia{background:var(--c);color:#fff}
+.bola{background:linear-gradient(to top, var(--c) var(--p,0%), transparent var(--p,0%))}
+.bola.meia{color:#fff;text-shadow:0 0 3px rgba(0,0,0,.35)}
+.bola.cheia{background:var(--c);color:#fff;box-shadow:0 0 0 2px color-mix(in srgb,var(--c) 35%,transparent)}
+.aulas-ev{list-style:none;margin:0;padding:0}
+.aulas-ev li{display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.aulas-ev li:last-child{border-bottom:0}
+.aulas-ev .ix{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:900;font-size:.75rem;color:var(--c);border:2px solid var(--c)}
+.ae-txt{min-width:0;display:flex;flex-direction:column;line-height:1.25}
+.ae-txt a{color:var(--ink);text-decoration:none}
+.ae-txt small{font-size:.78rem}
+.ae-txt small.sem{color:var(--xp2)}
+.pips{display:flex;gap:5px;align-items:center}
+.pip{width:18px;height:18px;border-radius:50%;border:2px solid var(--c);background:transparent;padding:0;cursor:pointer;transition:transform .1s,background .15s}
+.pip.on{background:var(--c)}
+.pip:hover{transform:scale(1.2)}
+.pip:focus-visible{outline:3px solid var(--xp);outline-offset:1px}
+.pn{min-width:30px;text-align:right;color:var(--mut);font-weight:800}
+@media (max-width:700px){.aulas-ev li{grid-template-columns:24px 1fr}.pips{grid-column:2}}
 .bola:focus-visible{outline:3px solid var(--xp);outline-offset:2px}
 .bola.pulso{animation:pulso .35s}
 @keyframes pulso{50%{transform:scale(1.35)}}
@@ -53,25 +70,48 @@
 
 <section class="card">
   <h2>Por matéria</h2>
-  <p class="hint" style="margin-top:-6px">Cada círculo é uma aula: clique quando terminar de ler (fica preenchido). Clicou errado? Clique de novo. Toque na matéria para ver e definir o assunto das questões.</p>
-  <div class="pm-cab"><span>Matéria</span><span>Aulas lidas</span><span>Questões</span><span>Acerto</span><span>Último</span></div>
+  <p class="hint" style="margin-top:-6px">Cada círculo é uma aula e vai se colorindo a cada leitura — fica cheio na {{ materias[0][1].alvo if materias else 5 }}ª. Clique no círculo para registrar uma leitura. Toque na matéria para ver as aulas, os assuntos e as bolinhas de cada leitura.</p>
+  <div class="pm-cab"><span>Matéria</span><span>Aulas (leituras)</span><span>Questões</span><span>Acerto</span><span>Último</span></div>
   {% for m, s, pa in materias %}
   <details class="pm" style="--c:{{ m.cor }}">
     <summary>
       <span class="pm-nome"><i class="seta"></i><b>{{ m.nome }}</b></span>
       <span class="pm-aulas">
-        {% for a in m.aulas %}{% set n = a.leituras|length %}
-        <button type="button" class="bola {{ 'cheia' if n }}" data-aula="{{ a.id }}" data-titulo="{{ a.titulo }}" data-lida="{{ 1 if n else 0 }}"
-          title="Aula {{ loop.index }}: {{ a.titulo }}{{ ' — lida em ' ~ (a.leituras[-1].lida_em|dt) if n }}"
-          aria-label="Aula {{ loop.index }}: {{ a.titulo }}" aria-pressed="{{ 'true' if n else 'false' }}">{{ loop.index }}</button>
+        {% for a in m.aulas %}{% set n = a.leituras|length %}{% set pc = [100, (100 * n / s.alvo)|round]|min %}
+        <button type="button" class="bola {{ 'cheia' if n >= s.alvo }}" data-aula="{{ a.id }}" data-n="{{ n }}" data-alvo="{{ s.alvo }}"
+          style="--p:{{ pc }}%" data-titulo="{{ a.titulo }}"
+          title="Aula {{ loop.index }}: {{ a.titulo }} — {{ n }}/{{ s.alvo }} leituras"
+          aria-label="Aula {{ loop.index }}: {{ a.titulo }}, {{ n }} de {{ s.alvo }} leituras">{{ loop.index }}</button>
         {% else %}<a class="mut" href="{{ url_for('materia', mid=m.id) }}#aulas" style="font-size:.82rem">nenhuma aula enviada</a>{% endfor %}
-        {% if m.aulas %}<small class="mut cont" data-m="{{ m.id }}">{{ s.aulas_lidas }}/{{ s.aulas }}</small>{% endif %}
+        {% if m.aulas %}<small class="mut cont" data-m="{{ m.id }}" title="aulas lidas {{ s.alvo }}x">{{ s.aulas_completas }}/{{ s.aulas }}</small>{% endif %}
       </span>
       <span>{{ s.questoes }}</span>
       <span>{% if s.acerto is not none %}<span class="tag {{ 'ok' if s.acerto >= meta_acerto else 'err' }}">{{ s.acerto|pct }}</span>{% else %}—{% endif %}</span>
       <span>{{ s.ultimo|pct }}</span>
     </summary>
     <div class="pm-corpo">
+      {% if m.aulas %}
+      <h3>Aulas</h3>
+      <ul class="aulas-ev">
+        {% for a in m.aulas %}{% set n = a.leituras|length %}
+        <li data-aula="{{ a.id }}">
+          <span class="ix">{{ loop.index }}</span>
+          <div class="ae-txt">
+            <a href="{{ url_for('aula_ver', aid=a.id) }}"><b>{{ a.titulo }}</b></a>
+            <small class="{{ 'mut' if a.topico else 'sem' }}">{{ a.topico.rotulo if a.topico else 'Assunto não definido — defina em Aprender' }}</small>
+          </div>
+          <div class="pips" role="group" aria-label="Leituras de {{ a.titulo }}">
+            {% for k in range(1, s.alvo + 1) %}
+            <button type="button" class="pip {{ 'on' if k <= n }}" data-k="{{ k }}"
+              title="{{ k }}ª leitura{{ ' — ' ~ (a.leituras[k-1].lida_em|dt) if k <= n else '' }}" aria-label="{{ k }}ª leitura{{ ' (feita)' if k <= n }}"></button>
+            {% endfor %}
+            <small class="pn">{{ n }}/{{ s.alvo }}</small>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      <p class="hint">Bolinha vazia: registra uma leitura. Última bolinha preenchida: desfaz a leitura.</p>
+      {% endif %}
       <h3>Assunto das questões</h3>
       {% for c in m.cadernos %}
       <div class="cad">
@@ -119,10 +159,11 @@
 </section>
 {% endblock %}
 {% block js %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
 <script>
 const PONTOS = {{ pontos|tojson }}, SEMANAS = {{ semanas|tojson }}, META = {{ meta_acerto }};
 const css = getComputedStyle(document.documentElement), cor = v => css.getPropertyValue(v).trim();
+if (window.Chart) { try {
 Chart.defaults.font.family = 'Nunito, system-ui, sans-serif';
 Chart.defaults.font.weight = 700;
 Chart.defaults.color = cor('--mut');
@@ -149,23 +190,49 @@ new Chart(document.getElementById('gSemana'), {data:{labels: SEMANAS.map(s => s.
   scales:{y:{beginAtZero:true, title:{display:true, text:'leituras'}, grid:{color:cor('--line')}},
           y1:{beginAtZero:true, position:'right', title:{display:true, text:'questões'}, grid:{display:false}}, x:{grid:{display:false}}}}});
 
-// círculos de aulas lidas: clique preenche (lida); clique de novo esvazia
-document.querySelectorAll('.bola').forEach(b => b.addEventListener('click', async e => {
-  e.preventDefault(); e.stopPropagation();
-  const lida = b.dataset.lida === '1';
-  const acao = lida ? 'desmarcar' : 'ler';
-  // muda na hora; se o servidor falhar, volta
-  b.classList.toggle('cheia', !lida); b.dataset.lida = lida ? '0' : '1'; b.setAttribute('aria-pressed', !lida);
-  b.classList.remove('pulso'); void b.offsetWidth; b.classList.add('pulso');
-  try {
-    const r = await fetch('/api/aula/' + b.dataset.aula + '/leitura', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acao})});
-    const d = await r.json(); if (!d.ok) throw 0;
-    const cont = b.parentElement.querySelector('.cont'); if (cont) cont.textContent = d.aulas_lidas + '/' + d.aulas;
-    b.title = b.title.split(' — ')[0] + (d.leituras ? ' — lida em ' + d.ultima : '');
-  } catch (_) {
-    b.classList.toggle('cheia', lida); b.dataset.lida = lida ? '1' : '0'; b.setAttribute('aria-pressed', lida);
-    alert('Não foi possível salvar. Tente de novo.');
-  }
+} catch (e) { console.error(e); } }
+// leituras: círculo (resumo) + bolinhas (aulas expandidas) ficam sincronizados
+function pintar(aid, n, ultima) {
+  document.querySelectorAll('.bola[data-aula="' + aid + '"]').forEach(b => {
+    const alvo = +b.dataset.alvo, p = Math.min(100, Math.round(100 * n / alvo));
+    b.dataset.n = n; b.style.setProperty('--p', p + '%');
+    b.classList.toggle('cheia', n >= alvo); b.classList.toggle('meia', n < alvo && p >= 60);
+    b.title = b.title.replace(/— \d+\/\d+ leituras/, '— ' + n + '/' + alvo + ' leituras');
+    b.classList.remove('pulso'); void b.offsetWidth; b.classList.add('pulso');
+    const det = b.closest('.pm'), cont = det && det.querySelector('.cont');
+    if (cont) { const bs = det.querySelectorAll('.bola'); cont.textContent = [...bs].filter(x => +x.dataset.n >= +x.dataset.alvo).length + '/' + bs.length; }
+  });
+  document.querySelectorAll('.aulas-ev li[data-aula="' + aid + '"]').forEach(li => {
+    li.querySelectorAll('.pip').forEach(pp => pp.classList.toggle('on', +pp.dataset.k <= n));
+    const pn = li.querySelector('.pn'); pn.textContent = n + '/' + pn.textContent.split('/')[1];
+  });
+}
+async function registrar(aid, acao) {
+  const r = await fetch('/api/aula/' + aid + '/leitura', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acao})});
+  const d = await r.json(); if (!d.ok) throw 0;
+  pintar(aid, d.leituras, d.ultima);
+}
+document.querySelectorAll('.bola').forEach(b => {
+  if (+b.dataset.n >= +b.dataset.alvo * .6 && +b.dataset.n < +b.dataset.alvo) b.classList.add('meia');
+  b.addEventListener('click', async e => {
+    e.preventDefault(); e.stopPropagation();
+    if (+b.dataset.n >= +b.dataset.alvo) { alert('"' + b.dataset.titulo + '" já foi lida ' + b.dataset.n + 'x. Para desfazer, abra a matéria e use as bolinhas.'); return; }
+    b.disabled = true;
+    try { await registrar(b.dataset.aula, 'ler'); } catch (_) { alert('Não foi possível salvar. Tente de novo.'); }
+    b.disabled = false;
+  });
+});
+document.querySelectorAll('.aulas-ev .pips').forEach(box => box.addEventListener('click', async e => {
+  const pp = e.target.closest('.pip'); if (!pp) return;
+  const li = box.closest('li'), aid = li.dataset.aula;
+  const n = li.querySelectorAll('.pip.on').length, k = +pp.dataset.k;
+  let acao;
+  if (!pp.classList.contains('on')) acao = 'ler';
+  else if (k === n) acao = 'desfazer';
+  else { if (!confirm('Desfazer a última leitura (' + n + 'ª) desta aula?')) return; acao = 'desfazer'; }
+  box.style.opacity = .6;
+  try { await registrar(aid, acao); } catch (_) { alert('Não foi possível salvar. Tente de novo.'); }
+  box.style.opacity = 1;
 }));
 // assunto dos cadernos (salva ao sair do campo)
 document.querySelectorAll('.assunto').forEach(i => {

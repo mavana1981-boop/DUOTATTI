@@ -752,6 +752,7 @@ def stats_materia(m):
         "pct_aulas": round(100 * lidas / len(m.aulas)) if m.aulas else 0,
         "alvo": alvo,
         "leituras_meta": feitas,
+        "aulas_completas": sum(1 for a in m.aulas if len(a.leituras) >= alvo),
         "leituras_total_meta": alvo * len(m.aulas),
         "pct_meta": round(100 * feitas / (alvo * len(m.aulas))) if m.aulas else 0,
         "topicos_lidos": lidos_top,
