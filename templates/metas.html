@@ -26,6 +26,16 @@
     <div style="margin-top:14px"><button class="btn">Salvar metas</button></div>
   </form>
   <div class="card">
+    <h2>Situação das leituras</h2>
+    {% if p.fase == 'questoes' %}
+    <p>O prazo das leituras já passou: fase de questões e descanso.</p>
+    {% elif p.total_aulas %}
+    <p style="margin-top:0">Faltam <b>{{ p.aulas_faltando }}</b> aula{{ '' if p.aulas_faltando == 1 else 's' }} e <b>{{ p.restante }}</b> leitura{{ '' if p.restante == 1 else 's' }} para ler cada aula {{ p.alvo }}x até <b>{{ p.limite.strftime('%d/%m') }}</b>
+    ({{ p.dias }} dia{{ '' if p.dias == 1 else 's' }}, contando hoje). A meta é recalculada todo dia conforme o que você já leu.</p>
+    <p style="margin:0 0 16px"><b>Meta de hoje: {{ p.meta_hoje }} leitura{{ '' if p.meta_hoje == 1 else 's' }}</b> ({{ p.feitas_hoje }} feita{{ '' if p.feitas_hoje == 1 else 's' }}).</p>
+    {% else %}
+    <p class="mut">Nenhuma aula enviada ainda.</p>
+    {% endif %}
     <h2>Como o Tatti reage</h2>
     <div class="row" style="justify-content:space-between;margin-bottom:10px">
       {% for hm in ['furioso','bravo','neutro','feliz','radiante'] %}

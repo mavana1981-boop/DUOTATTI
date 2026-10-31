@@ -70,7 +70,7 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
   {% set pl = [100, (100 * p.feitas_hoje / p.meta_hoje) if p.meta_hoje else 100]|min %}
   <div class="row" style="margin-top:10px"><b>Leituras de aula</b><span class="right mut"><b style="color:var(--ink)">{{ p.feitas_hoje }}</b>/{{ p.meta_hoje }}</span></div>
   <div class="bar azul" style="margin:6px 0 6px"><i style="width:{{ pl|round }}%"></i></div>
-  <p class="hint" style="margin:0 0 12px">Faltam <b>{{ p.restante }}</b> leituras para ler cada aula {{ p.alvo }}x até <b>{{ p.limite.strftime('%d/%m') }}</b>
+  <p class="hint" style="margin:0 0 12px">Faltam <b>{{ p.aulas_faltando }}</b> aula{{ '' if p.aulas_faltando == 1 else 's' }} e <b>{{ p.restante }}</b> leitura{{ '' if p.restante == 1 else 's' }} para ler cada aula {{ p.alvo }}x até <b>{{ p.limite.strftime('%d/%m') }}</b>
     ({{ p.dias }} dia{{ '' if p.dias == 1 else 's' }}, contando hoje). A meta é recalculada todo dia conforme o que você já leu.</p>
 
   {% if p.atrasadas %}
