@@ -31,6 +31,10 @@ a{color:var(--blue)}
 .chips{margin-left:auto;display:flex;gap:10px;font-weight:800;font-size:.95rem}
 .chip{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;background:var(--soft)}
 .chip svg{width:18px;height:18px}
+.chip.quem{font-size:.85rem}
+.chip .sair{color:var(--mut);font-weight:800;font-size:.78rem;margin-left:4px;text-decoration:none;border-left:2px solid var(--line);padding-left:7px}
+.chip .sair:hover{color:var(--err)}
+@media (max-width:560px){.quem-nome{display:none}.chip .sair{border:0;margin:0;padding:0}.chips{gap:6px}.logo-tx{font-size:1.15rem}}
 nav.desk{display:none;gap:4px}
 nav.desk a,nav.bottom a{text-decoration:none;color:var(--mut);font-weight:800;padding:8px 12px;border-radius:12px}
 nav.desk a.on,nav.bottom a.on{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}
@@ -108,12 +112,15 @@ th{color:var(--mut);font-weight:800;font-size:.8rem;text-transform:uppercase}
 {% set ep = request.endpoint or '' %}
 <header class="top"><div class="top-in">
   <a class="logo" href="{{ url_for('index') }}"><img class="logo-av tatti-{{ hm }}" src="{{ url_for('static', filename='avatar/' ~ hm ~ '.png') }}" width="34" height="34" alt=""><b class="logo-tx">DUO<span>TATTI</span></b></a>
-  <nav class="desk">
+  {% if usuario %}<nav class="desk">
     <a href="{{ url_for('index') }}" class="{{ 'on' if ep in ('index','materia','aula_ver','caderno_resolver','tentativa_ver','caderno_gabarito') }}">Aprender</a>
     <a href="{{ url_for('historico') }}" class="{{ 'on' if ep=='historico' }}">Evolução</a>
     <a href="{{ url_for('metas') }}" class="{{ 'on' if ep=='metas' }}">Metas</a>
-  </nav>
+    {% if usuario and usuario.admin %}<a href="{{ url_for('logs') }}" class="{{ 'on' if ep=='logs' }}">Logs</a>{% endif %}
+  </nav>{% endif %}
   <div class="chips">
+    {% if usuario %}<span class="chip quem" title="Conectado como {{ usuario.login }}"><span class="quem-nome">{{ usuario.nome or usuario.login }}</span>
+      <a href="{{ url_for('logout') }}" class="sair" aria-label="Sair">Sair</a></span>{% endif %}
     {% if dias_prova is not none %}<span class="chip" title="Dias para a prova">
       <svg viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>{{ dias_prova }}</span>{% endif %}
   </div>
@@ -125,6 +132,7 @@ th{color:var(--mut);font-weight:800;font-size:.8rem;text-transform:uppercase}
 
 <main>{% block conteudo %}{% endblock %}</main>
 
+{% if usuario %}
 <nav class="bottom" aria-label="Navegação">
   <a href="{{ url_for('index') }}" class="{{ 'on' if ep in ('index','materia','aula_ver','caderno_resolver','tentativa_ver','caderno_gabarito') }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Aprender</a>
@@ -132,7 +140,12 @@ th{color:var(--mut);font-weight:800;font-size:.8rem;text-transform:uppercase}
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Evolução</a>
   <a href="{{ url_for('metas') }}" class="{{ 'on' if ep=='metas' }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>Metas</a>
+  {% if usuario and usuario.admin %}
+  <a href="{{ url_for('logs') }}" class="{{ 'on' if ep=='logs' }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>Logs</a>
+  {% endif %}
 </nav>
+{% endif %}
 {% block js %}{% endblock %}
 </body>
 </html>

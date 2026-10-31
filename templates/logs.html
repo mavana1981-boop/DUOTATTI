@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block titulo %}Logs de acesso{% endblock %}
+{% block css %}
+.ev{display:inline-block;font-size:.72rem;font-weight:900;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.03em}
+.ev.login{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok2)}
+.ev.logout{background:var(--soft);color:var(--mut)}
+.ev.falha{background:color-mix(in srgb,var(--err) 15%,transparent);color:var(--err)}
+.ev.pagina{background:color-mix(in srgb,var(--blue) 12%,transparent);color:var(--blue2)}
+.logs td{vertical-align:top}
+.logs .ap{color:var(--mut);font-size:.78rem;max-width:280px;overflow-wrap:anywhere}
+.filtros{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.filtros>div{min-width:150px}
+@media (max-width:640px){.logs .col-ap,.logs .col-ip{display:none}}
+{% endblock %}
+{% block conteudo %}
+<h1>Logs de acesso</h1>
+<p class="sub">Entradas, saídas, senhas erradas e páginas abertas. Mostrando os 500 registros mais recentes.</p>
+
+<section class="grid g2" style="margin-bottom:16px">
+  {% for r in resumo %}
+  <div class="stat">
+    <small>{{ r.u.nome or r.u.login }} ({{ r.u.login }}){% if r.u.admin %} · admin{% endif %}</small>
+    <b style="font-size:1.2rem">{{ r.ultima_atividade|dt if r.ultima_atividade else 'nunca acessou' }}</b>
+    <small>última atividade · {{ r.logins }} login{{ '' if r.logins == 1 else 's' }}{% if r.ultimo_login %} · último login {{ r.ultimo_login|dt }}{% endif %}</small>
+  </div>
+  {% endfor %}
+  <div class="stat"><small>Tentativas com senha errada</small><b style="color:{{ 'var(--err)' if falhas else 'var(--ink)' }}">{{ falhas }}</b></div>
+</section>
+
+<section class="card">
+  <form class="filtros" method="get">
+    <div><label class="f">Usuário</label>
+      <select name="usuario"><option value="">Todos</option>
+        {% for u in usuarios %}<option value="{{ u.login }}" {{ 'selected' if u.login == f_usuario }}>{{ u.login }}</option>{% endfor %}
+      </select></div>
+    <div><label class="f">Evento</label>
+      <select name="evento"><option value="">Todos</option>
+        {% for e, rot in [('login','Entrou'),('logout','Saiu'),('falha','Senha errada'),('pagina','Página aberta')] %}
+        <option value="{{ e }}" {{ 'selected' if e == f_evento }}>{{ rot }}</option>{% endfor %}
+      </select></div>
+    <div><button class="btn mini">Filtrar</button></div>
+  </form>
+</section>
+
+<section class="card" style="overflow-x:auto">
+  <table class="logs">
+    <tr><th>Quando</th><th>Usuário</th><th>Evento</th><th>Página</th><th class="col-ip">IP</th><th class="col-ap">Aparelho</th></tr>
+    {% for l in registros %}
+    <tr>
+      <td style="white-space:nowrap">{{ l.quando|dt('%d/%m/%Y %H:%M:%S') }}</td>
+      <td><b>{{ l.usuario }}</b></td>
+      <td><span class="ev {{ l.evento }}">{{ {'login':'entrou','logout':'saiu','falha':'senha errada','pagina':'página'}.get(l.evento, l.evento) }}</span></td>
+      <td style="overflow-wrap:anywhere">{{ l.caminho }}</td>
+      <td class="col-ip">{{ l.ip }}</td>
+      <td class="ap col-ap">{{ l.aparelho }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="mut">Nenhum registro.</td></tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}

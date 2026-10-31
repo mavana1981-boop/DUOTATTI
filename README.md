@@ -22,12 +22,14 @@ python app.py        # http://localhost:5000  (usa SQLite: duotatti.db)
 2. Adicione um banco **PostgreSQL** ao projeto — a variável `DATABASE_URL` é injetada automaticamente.
 3. Variáveis recomendadas:
    - `SECRET_KEY` — qualquer texto longo e aleatório.
-   - `APP_PASSWORD` — (opcional) protege o app com senha.
    - `MAX_UPLOAD_MB` — (opcional) limite de upload, padrão 80.
    - `ANTHROPIC_API_KEY` — (recomendado) ativa a leitura das questões com IA (Claude): o app lê cada PDF de questões e reconstrói enunciado, alternativas, textos de apoio e descrição de figuras. Sem ela, usa o leitor simples.
    - `ANTHROPIC_MODEL` — (opcional) modelo da IA, padrão `claude-sonnet-5-5`.
 
 Os PDFs ficam salvos **dentro do Postgres**, então não se perdem a cada deploy (o disco do Railway é efêmero).
+
+## Usuários
+O app exige login. Usuários criados no primeiro deploy: `admin` / `admin` (administrador, vê o menu **Logs**) e `renata` / `tatti`. O menu Logs mostra entradas, saídas, senhas erradas e páginas acessadas.
 
 ## Estrutura
 ```

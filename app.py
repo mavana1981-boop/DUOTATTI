@@ -18,6 +18,7 @@ from flask_sqlalchemy import SQLAlchemy
 from jinja2 import ChoiceLoader, FileSystemLoader
 from pypdf import PdfReader
 from sqlalchemy.orm import deferred
+from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 from edital import EDITAL, TODO, chave_legada
@@ -197,6 +198,31 @@ class Questao(db.Model):
             return json.loads(self.alternativas_json or "{}")
         except Exception:
             return {}
+
+
+class Usuario(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    login = db.Column(db.String(60), unique=True, nullable=False)
+    nome = db.Column(db.String(100))
+    senha_hash = db.Column(db.String(300), nullable=False)
+    admin = db.Column(db.Boolean, default=False)
+    criado_em = db.Column(db.DateTime, default=agora)
+
+    def senha_ok(self, senha):
+        return check_password_hash(self.senha_hash, senha or "")
+
+
+class LogAcesso(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    quando = db.Column(db.DateTime, default=agora, nullable=False, index=True)
+    usuario = db.Column(db.String(60), index=True)
+    evento = db.Column(db.String(20), nullable=False)  # login | falha | logout | pagina
+    caminho = db.Column(db.String(300))
+    ip = db.Column(db.String(64))
+    aparelho = db.Column(db.String(300))
+
+
+USUARIOS_INICIAIS = [("admin", "Administrador", "admin", True), ("renata", "Renata", "tatti", False)]
 
 
 class Config(db.Model):
@@ -406,6 +432,13 @@ def ajustar_bateria_minima():
         db.session.commit()
 
 
+def criar_usuarios():
+    for login_, nome, senha, adm in USUARIOS_INICIAIS:
+        if not Usuario.query.filter_by(login=login_).first():
+            db.session.add(Usuario(login=login_, nome=nome, senha_hash=generate_password_hash(senha), admin=adm))
+    db.session.commit()
+
+
 def _preparar_banco():
     if db.engine.dialect.name == "postgresql":
         with db.engine.begin() as conn:
@@ -416,6 +449,7 @@ def _preparar_banco():
         with db.engine.begin() as conn:
             migrar(conn)
     seed()
+    criar_usuarios()
     migrar_vinculos_aulas()
     atualizar_topicos_edital()
     assuntos_para_topicos()
@@ -1039,30 +1073,109 @@ def manifest():
     return resp
 
 
+app.permanent_session_lifetime = timedelta(days=30)
+LIVRES = ("login", "static", "manifest")
+
+
+def usuario_atual():
+    if "usuario_atual" not in g:
+        uid = session.get("uid")
+        g.usuario_atual = db.session.get(Usuario, uid) if uid else None
+    return g.usuario_atual
+
+
+def _ip():
+    return (request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "")[:64]
+
+
+def registrar(evento, usuario=None, caminho=None):
+    try:
+        db.session.add(LogAcesso(quando=agora(), usuario=(usuario or "")[:60], evento=evento,
+                                 caminho=(caminho or request.full_path.rstrip("?"))[:300], ip=_ip(),
+                                 aparelho=(request.headers.get("User-Agent") or "")[:300]))
+        db.session.commit()
+    except Exception:  # log nunca derruba a página
+        db.session.rollback()
+
+
 @app.before_request
-def exigir_senha():
-    senha = os.environ.get("APP_PASSWORD")
-    if not senha or request.endpoint in ("login", "static", "manifest") or session.get("ok"):
+def exigir_login():
+    if request.endpoint in LIVRES:
         return None
-    return redirect(url_for("login", next=request.path))
+    u = usuario_atual()
+    if u is None:
+        if request.path.startswith("/api/"):
+            return jsonify(ok=False, erro="faça login"), 401
+        return redirect(url_for("login", next=request.full_path.rstrip("?")))
+    if request.method == "GET" and not request.path.startswith("/api/") and request.endpoint not in ("aula_pdf",):
+        registrar("pagina", u.login)
+    return None
+
+
+def so_admin(f):
+    from functools import wraps
+
+    @wraps(f)
+    def w(*a, **k):
+        u = usuario_atual()
+        if not u or not u.admin:
+            abort(403)
+        return f(*a, **k)
+    return w
+
+
+@app.context_processor
+def contexto_usuario():
+    return {"usuario": usuario_atual() if request.endpoint not in ("static",) else None}
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        if request.form.get("senha") == os.environ.get("APP_PASSWORD"):
-            session["ok"] = True
+        login_ = request.form.get("usuario", "").strip().lower()
+        u = Usuario.query.filter_by(login=login_).first()
+        if u and u.senha_ok(request.form.get("senha")):
+            session.clear()
+            session["uid"] = u.id
             session.permanent = True
+            registrar("login", u.login, "/login")
             nxt = request.args.get("next", "/")
-            return redirect(nxt if nxt.startswith("/") else "/")
-        flash("Senha incorreta.", "erro")
+            return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else "/")
+        registrar("falha", login_ or "(vazio)", "/login")
+        flash("Usuário ou senha incorretos.", "erro")
     return render_template("login.html")
 
 
 @app.route("/logout")
 def logout():
+    u = usuario_atual()
+    if u:
+        registrar("logout", u.login, "/logout")
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/logs")
+@so_admin
+def logs():
+    f_usuario = request.args.get("usuario", "")
+    f_evento = request.args.get("evento", "")
+    q = LogAcesso.query
+    if f_usuario:
+        q = q.filter_by(usuario=f_usuario)
+    if f_evento:
+        q = q.filter_by(evento=f_evento)
+    registros = q.order_by(LogAcesso.quando.desc(), LogAcesso.id.desc()).limit(500).all()
+    usuarios = Usuario.query.order_by(Usuario.login).all()
+    resumo = []
+    for u in usuarios:
+        ult = (LogAcesso.query.filter_by(usuario=u.login, evento="login").order_by(LogAcesso.quando.desc()).first())
+        ult_atv = (LogAcesso.query.filter_by(usuario=u.login).order_by(LogAcesso.quando.desc()).first())
+        resumo.append({"u": u, "ultimo_login": ult.quando if ult else None, "ultima_atividade": ult_atv.quando if ult_atv else None,
+                       "logins": LogAcesso.query.filter_by(usuario=u.login, evento="login").count()})
+    falhas = LogAcesso.query.filter_by(evento="falha").count()
+    return render_template("logs.html", registros=registros, usuarios=usuarios, resumo=resumo, falhas=falhas,
+                           f_usuario=f_usuario, f_evento=f_evento)
 
 
 # --------------------------------------------------------------------------- #

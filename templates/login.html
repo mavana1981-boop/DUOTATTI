@@ -4,9 +4,12 @@
 {% block conteudo %}
 <form class="card" method="post" style="max-width:380px;margin:30px auto;text-align:center">
   <div style="display:flex;justify-content:center">{{ tatti('neutro', 130) }}</div>
-  <h1>DUOTATTI</h1>
-  <p class="sub">Digite a senha para continuar.</p>
-  <input type="password" name="senha" autofocus required autocomplete="current-password">
-  <div style="margin-top:14px"><button class="btn cheio">Entrar</button></div>
+  <h1 style="margin-top:10px">DUO<span style="color:var(--roxo)">TATTI</span></h1>
+  <p class="sub">Entre para continuar os estudos.</p>
+  <label class="f" for="u" style="text-align:left">Usuário</label>
+  <input type="text" id="u" name="usuario" autofocus required autocomplete="username" autocapitalize="none" spellcheck="false">
+  <label class="f" for="s" style="text-align:left">Senha</label>
+  <input type="password" id="s" name="senha" required autocomplete="current-password">
+  <div style="margin-top:16px"><button class="btn cheio">Entrar</button></div>
 </form>
 {% endblock %}
