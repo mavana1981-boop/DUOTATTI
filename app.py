@@ -84,6 +84,13 @@ class Topico(db.Model):
         return self.nome
 
 
+aula_topico = db.Table(
+    "aula_topico",
+    db.Column("aula_id", db.Integer, db.ForeignKey("aula.id", ondelete="CASCADE"), primary_key=True),
+    db.Column("topico_id", db.Integer, db.ForeignKey("topico.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
 class Aula(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     materia_id = db.Column(db.Integer, db.ForeignKey("materia.id"), nullable=False)
@@ -95,7 +102,9 @@ class Aula(db.Model):
     tamanho = db.Column(db.Integer)
     criada_em = db.Column(db.DateTime, default=agora)
     ordem = db.Column(db.Integer)  # posição na lista da matéria (o usuário reordena)
-    topico = db.relationship("Topico")
+    topico = db.relationship("Topico")  # legado: vínculo único (migrado para 'topicos')
+    topicos = db.relationship("Topico", secondary=aula_topico, order_by="Topico.ordem", lazy="selectin",
+                              backref=db.backref("aulas_vinc", lazy="selectin"))
     leituras = db.relationship("Leitura", backref="aula", order_by="Leitura.lida_em",
                                cascade="all, delete-orphan", lazy="selectin")
 
@@ -254,6 +263,10 @@ def definir_topico_caderno(c, topico_id=None, novo=None):
 def fundir_topico(origem, destino):
     """Passa aulas e cadernos do tópico 'origem' para 'destino' e apaga 'origem'."""
     Aula.query.filter_by(topico_id=origem.id).update({"topico_id": destino.id}, synchronize_session=False)
+    for a in list(origem.aulas_vinc):
+        if destino not in a.topicos:
+            a.topicos.append(destino)
+        a.topicos.remove(origem)
     Caderno.query.filter_by(topico_id=origem.id).update({"topico_id": destino.id}, synchronize_session=False)
     db.session.delete(origem)
 
@@ -275,7 +288,7 @@ def atualizar_topicos_edital():
         for t in edital:
             chave = (t.grupo, t.nome) if (t.grupo, t.nome) in alvo else chave_legada(m.nome, t.nome)
             if chave is None:  # tópico antigo sem correspondente
-                tem_vinculo = (Aula.query.filter_by(topico_id=t.id).count()
+                tem_vinculo = (t.aulas_vinc or Aula.query.filter_by(topico_id=t.id).count()
                                or Caderno.query.filter_by(topico_id=t.id).count())
                 if tem_vinculo:
                     t.grupo = "Outros (versão anterior)"
@@ -339,6 +352,16 @@ def numerar_aulas():
     db.session.commit()
 
 
+def migrar_vinculos_aulas():
+    """Vínculo único antigo (aula.topico_id) vira vínculo múltiplo (aula_topico)."""
+    for a in Aula.query.filter(Aula.topico_id.isnot(None)).all():
+        t = db.session.get(Topico, a.topico_id)
+        if t and t not in a.topicos:
+            a.topicos.append(t)
+        a.topico_id = None
+    db.session.commit()
+
+
 def _preparar_banco():
     if db.engine.dialect.name == "postgresql":
         with db.engine.begin() as conn:
@@ -349,6 +372,7 @@ def _preparar_banco():
         with db.engine.begin() as conn:
             migrar(conn)
     seed()
+    migrar_vinculos_aulas()
     atualizar_topicos_edital()
     assuntos_para_topicos()
     numerar_aulas()
@@ -823,7 +847,7 @@ def stats_materia(m):
     lidas = sum(1 for a in m.aulas if a.leituras)
     alvo = max(1, int(cfg_num(configs(), "meta_leituras_por_aula")))
     feitas = sum(min(len(a.leituras), alvo) for a in m.aulas)
-    lidos_top = {a.topico_id for a in m.aulas if a.leituras and a.topico_id}
+    lidos_top = {t.id for a in m.aulas if a.leituras for t in a.topicos}
     return {
         "aulas": len(m.aulas),
         "aulas_lidas": lidas,
@@ -938,10 +962,13 @@ def _ler_upload(f):
 def aula_nova(mid):
     m = db.get_or_404(Materia, mid)
     arquivos = [f for f in request.files.getlist("pdfs") if f and f.filename]
-    topico_id = request.form.get("topico_id", type=int) or None
+    validos = {t.id: t for t in m.topicos}
+    vinc = [validos[i] for i in dict.fromkeys(request.form.getlist("topico_ids", type=int)) if i in validos]
     novo = request.form.get("novo_assunto", "").strip()
     if novo:
-        topico_id = garantir_topico(m.id, novo).id
+        t_novo = garantir_topico(m.id, novo)
+        if t_novo not in vinc:
+            vinc.append(t_novo)
     n = 0
     prox = (db.session.query(db.func.max(Aula.ordem)).filter_by(materia_id=m.id).scalar() or 0) + 1
     for f in arquivos:
@@ -949,7 +976,7 @@ def aula_nova(mid):
         if not data:
             continue
         t = nome_padrao(nome)
-        db.session.add(Aula(materia_id=m.id, topico_id=topico_id, titulo=t[:200], arquivo_nome=nome[:200],
+        db.session.add(Aula(materia_id=m.id, titulo=t[:200], arquivo_nome=nome[:200], topicos=list(vinc),
                             pdf=data, paginas=contar_paginas(data), tamanho=len(data), ordem=prox))
         prox += 1
         n += 1
@@ -1002,7 +1029,6 @@ def aula_editar(aid):
     t = request.form.get("titulo", "").strip()
     if t:
         a.titulo = t[:200]
-    a.topico_id = request.form.get("topico_id", type=int) or None
     db.session.commit()
     flash("Aula atualizada.", "ok")
     return redirect(url_for("aula_ver", aid=aid))
@@ -1173,20 +1199,30 @@ def api_aula_titulo(aid):
     return jsonify(ok=True, titulo=a.titulo)
 
 
-@app.post("/api/aula/<int:aid>/topico")
-def api_aula_topico(aid):
-    """Item do edital da aula (tela da matéria). Vazio = sem item."""
+def _vinculos_json(a):
+    return [{"id": t.id, "rotulo": t.rotulo, "personalizado": bool(t.personalizado)} for t in a.topicos]
+
+
+@app.post("/api/aula/<int:aid>/topicos")
+def api_aula_topicos(aid):
+    """Vínculos da aula com itens do edital: {"add": id} ou {"remove": id}."""
     a = db.get_or_404(Aula, aid)
-    tid = (request.get_json(silent=True) or {}).get("topico_id")
+    d = request.get_json(silent=True) or {}
+    validos = {t.id: t for t in a.materia.topicos}
     try:
-        tid = int(tid) if tid not in (None, "") else None
+        add = int(d["add"]) if d.get("add") not in (None, "") else None
+        rem = int(d["remove"]) if d.get("remove") not in (None, "") else None
     except (TypeError, ValueError):
         return jsonify(ok=False), 400
-    if tid is not None and not any(t.id == tid for t in a.materia.topicos):
-        return jsonify(ok=False), 400
-    a.topico_id = tid
+    if add is not None:
+        if add not in validos:
+            return jsonify(ok=False), 400
+        if validos[add] not in a.topicos:
+            a.topicos.append(validos[add])
+    if rem is not None and rem in validos and validos[rem] in a.topicos:
+        a.topicos.remove(validos[rem])
     db.session.commit()
-    return jsonify(ok=True, topico_id=tid)
+    return jsonify(ok=True, topicos=_vinculos_json(a))
 
 
 @app.post("/api/materia/<int:mid>/ordem-aulas")

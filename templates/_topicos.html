@@ -1,7 +1,7 @@
 {# Lista de tópicos agrupada: item do edital (optgroup) -> assuntos; depois "Seus assuntos".
    Assuntos que já têm aula vinculada ficam em azul e com a contagem de aulas. #}
 {% macro _opt(m, t, sel, rotulo) %}
-{%- set n = m.aulas|selectattr('topico_id', 'equalto', t.id)|list|length -%}
+{%- set n = t.aulas_vinc|length -%}
 <option value="{{ t.id }}" {{ 'selected' if t.id == sel }}{% if n %} class="com-aula" style="color:#2563c9;font-weight:700"{% endif %}>{{ rotulo }}{% if n %} ({{ n }} aula{{ '' if n == 1 else 's' }}){% endif %}</option>
 {%- endmacro %}
 {% macro opcoes(m, sel=None) %}
@@ -17,4 +17,20 @@
 {% if pe %}<optgroup label="Seus assuntos">
   {% for t in pe %}{{ _opt(m, t, sel, t.nome) }}{% endfor %}
 </optgroup>{% endif %}
+{% endmacro %}
+
+{# Etiquetas de itens do edital vinculados a uma aula.
+   aula != None: salva na hora pela API. aula == None (formulário de envio): gera campos topico_ids. #}
+{% macro vinculos(m, aula=None) %}
+<div class="vinc" {% if aula %}data-aula="{{ aula.id }}"{% else %}data-form="1"{% endif %}>
+  <div class="chips-t">
+    {% if aula %}{% for t in aula.topicos %}
+    <span class="chip-t {{ 'pers' if t.personalizado }}" data-id="{{ t.id }}"><span>{{ t.rotulo }}</span><button type="button" class="x" aria-label="Remover vínculo {{ t.rotulo }}">×</button></span>
+    {% endfor %}{% endif %}
+    <span class="vazio-t" {% if aula and aula.topicos %}hidden{% endif %}>Nenhum item do edital vinculado</span>
+  </div>
+  <select class="add-t" aria-label="Vincular item do edital">
+    <option value="">+ vincular item do edital ou assunto</option>{{ opcoes(m) }}
+  </select>
+</div>
 {% endmacro %}

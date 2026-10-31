@@ -1,7 +1,8 @@
 {% extends "base.html" %}
-{% from "_topicos.html" import opcoes %}
+{% from "_topicos.html" import opcoes, vinculos %}
 {% block titulo %}{{ m.nome }}{% endblock %}
 {% block css %}
+{% include "_vinculos_css.html" %}
 .cab{border-left:8px solid {{ m.cor }};padding-left:12px;margin-bottom:16px}
 .item{display:flex;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
 .item:last-child{border-bottom:0}
@@ -98,11 +99,11 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
       <label class="f">Arquivos PDF</label>
       <input type="file" name="pdfs" accept="application/pdf,.pdf" multiple required>
       <p class="hint">Pode enviar vários de uma vez — cada PDF vira uma aula com o nome do arquivo (dá para renomear depois).</p>
-      <label class="f">Vincular a um tópico ou assunto (opcional)</label>
-      <select name="topico_id" class="sel-topico"><option value="">—</option>{{ opcoes(m) }}</select>
+      <label class="f">Vincular a itens do edital ou assuntos (opcional — pode escolher vários)</label>
+      {{ vinculos(m) }}
       <label class="f">…ou crie um assunto novo</label>
       <input type="text" name="novo_assunto" placeholder="Ex.: Direitos sociais (arts. 6º a 11)">
-      <p class="hint">Em <b style="color:#2563c9">azul</b>, com a contagem entre parênteses: assuntos que já têm aula vinculada.</p>
+      <p class="hint">Na lista, em <b style="color:#2563c9">azul</b> e com a contagem entre parênteses: assuntos que já têm aula vinculada.</p>
       <p class="hint">O assunto novo fica disponível para as próximas aulas e para os cadernos de questões.</p>
       <div style="margin-top:14px"><button class="btn azul">Enviar</button></div>
     </form>
@@ -127,9 +128,7 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
         {% if n %}última leitura {{ a.leituras[-1].lida_em|dt }}{% else %}ainda não lida{% endif %}
         {% if a.paginas %} · {{ a.paginas }} pág.{% endif %}
       </div>
-      <select class="item-edital {{ 'vazio' if not a.topico_id }}" data-aula="{{ a.id }}" aria-label="Item do edital da aula {{ a.titulo }}">
-        <option value="">Item do edital / assunto: não definido</option>{{ opcoes(m, a.topico_id) }}
-      </select>
+      {{ vinculos(m, a) }}
     </div>
     <a class="btn mini {{ 'claro' if n else '' }}" href="{{ url_for('aula_ver', aid=a.id) }}">{{ 'Reler' if n else 'Ler' }}</a>
     <form method="post" action="{{ url_for('aula_excluir', aid=a.id) }}" class="excluir"
@@ -191,6 +190,7 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
 </section>
 {% endblock %}
 {% block js %}
+{% include "_vinculos_js.html" %}
 <script src="{{ url_for('static', filename='Sortable.min.js') }}"></script>
 <script>
 (function(){

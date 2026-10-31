@@ -164,7 +164,7 @@
           <span class="ix">{{ loop.index }}</span>
           <div class="ae-txt">
             <a href="{{ url_for('aula_ver', aid=a.id) }}"><b>{{ a.titulo }}</b></a>
-            <small class="{{ 'mut' if a.topico else 'sem' }}">{{ a.topico.rotulo if a.topico else 'Assunto não definido — defina em Aprender' }}</small>
+            <small class="{{ 'mut' if a.topicos else 'sem' }}">{{ a.topicos|map(attribute='rotulo')|join(' · ') if a.topicos else 'Assunto não definido — defina em Aprender' }}</small>
             {% if a.id in proxima %}<small class="prox">Próxima leitura prevista: {{ 'hoje' if proxima[a.id] == cal_hoje else proxima[a.id].strftime('%d/%m') }}{% if a.leituras %} · última em {{ a.leituras[-1].lida_em|dt('%d/%m') }}{% endif %}</small>
             {% elif a.leituras|length >= s.alvo %}<small class="prox" style="color:var(--ok)">Concluída — {{ s.alvo }} leituras</small>{% endif %}
           </div>

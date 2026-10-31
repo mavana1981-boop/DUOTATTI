@@ -1,0 +1,48 @@
+<script>
+// etiquetas de itens do edital (vínculo múltiplo)
+(function(){
+  const esc = t => String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  function chip(id, rot, pers, form) {
+    return '<span class="chip-t' + (pers ? ' pers' : '') + '" data-id="' + id + '"><span>' + esc(rot) + '</span>' +
+      '<button type="button" class="x" aria-label="Remover vínculo ' + esc(rot) + '">×</button>' +
+      (form ? '<input type="hidden" name="topico_ids" value="' + id + '">' : '') + '</span>';
+  }
+  function render(v, lista) {
+    const box = v.querySelector('.chips-t'), vazio = box.querySelector('.vazio-t');
+    box.querySelectorAll('.chip-t').forEach(c => c.remove());
+    lista.forEach(t => vazio.insertAdjacentHTML('beforebegin', chip(t.id, t.rotulo, t.personalizado, !!v.dataset.form)));
+    vazio.hidden = lista.length > 0;
+  }
+  async function api(v, corpo) {
+    v.classList.add('salvando');
+    try {
+      const r = await fetch('/api/aula/' + v.dataset.aula + '/topicos', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(corpo)});
+      const d = await r.json(); if (!d.ok) throw 0;
+      render(v, d.topicos);
+    } catch (_) { alert('Não foi possível salvar o vínculo.'); }
+    v.classList.remove('salvando');
+  }
+  document.querySelectorAll('.vinc').forEach(v => {
+    const sel = v.querySelector('.add-t');
+    sel.addEventListener('change', () => {
+      const id = sel.value; if (!id) return;
+      const op = sel.options[sel.selectedIndex];
+      const grupo = op.parentElement.tagName === 'OPTGROUP' ? op.parentElement.label : '';
+      let rot = op.textContent.replace(/ \(\d+ aulas?\)$/, '');
+      sel.value = '';
+      if (v.dataset.form) {
+        if (v.querySelector('.chip-t[data-id="' + id + '"]')) return;
+        const atuais = [...v.querySelectorAll('.chip-t')].map(c => ({id: c.dataset.id, rotulo: c.firstElementChild.textContent, personalizado: c.classList.contains('pers')}));
+        atuais.push({id, rotulo: rot, personalizado: grupo === 'Seus assuntos'});
+        render(v, atuais);
+      } else api(v, {add: id});
+    });
+    v.addEventListener('click', e => {
+      const x = e.target.closest('.x'); if (!x) return;
+      const c = x.closest('.chip-t');
+      if (v.dataset.form) { c.remove(); v.querySelector('.vazio-t').hidden = !!v.querySelector('.chip-t'); }
+      else api(v, {remove: c.dataset.id});
+    });
+  });
+})();
+</script>
