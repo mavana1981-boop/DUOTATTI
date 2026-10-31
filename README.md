@@ -1,6 +1,6 @@
 # DUOTATTI
 
-Plataforma de estudos para o concurso de **Escrevente Técnico Judiciário do TJSP** (Edital 02/2026, VUNESP), com o mascote **Tatti**, um tatu que fica feliz quando as metas são batidas e bravo quando não são.
+Plataforma de estudos para o concurso de **Escrevente Técnico Judiciário do TJSP** (Edital 02/2026, VUNESP), com a mascote **Tatti**, que fica feliz quando as metas são batidas e brava quando não são. O ícone do app (aba do navegador e atalho) acompanha o humor dela.
 
 ## Funcionalidades
 - **Trilha por matéria** (8 matérias e tópicos do edital já cadastrados).
@@ -30,7 +30,8 @@ Os PDFs ficam salvos **dentro do Postgres**, então não se perdem a cada deploy
 ## Estrutura
 ```
 app.py                 rotas, modelos, leitura de gabarito, humor do Tatti
-templates/_tatti.html  mascote em SVG (5 humores)
+templates/_tatti.html  mascote (5 humores, imagens em static/avatar/)
+static/icones/         ícones do app por humor
 templates/*.html       telas
 requirements.txt · Procfile
 ```

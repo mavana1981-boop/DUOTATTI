@@ -3,7 +3,7 @@
 {% block titulo %}Metas{% endblock %}
 {% block conteudo %}
 <h1>Metas</h1>
-<p class="sub">O humor do Tatti é calculado a partir destas metas.</p>
+<p class="sub">O humor da Tatti é calculado a partir destas metas.</p>
 <div class="grid g2">
   <form class="card" method="post">
     <label class="f">Seu nome</label>
@@ -36,10 +36,10 @@
     {% else %}
     <p class="mut">Nenhuma aula enviada ainda.</p>
     {% endif %}
-    <h2>Como o Tatti reage</h2>
+    <h2>Como a Tatti reage</h2>
     <div class="row" style="justify-content:space-between;margin-bottom:10px">
-      {% for hm in ['furioso','bravo','neutro','feliz','radiante'] %}
-      <div style="text-align:center;font-size:.75rem;font-weight:800" class="mut">{{ tatti(hm, 60) }}{{ hm }}</div>
+      {% for hm, rot in [('furioso','furiosa'),('bravo','brava'),('neutro','de olho'),('feliz','feliz'),('radiante','radiante')] %}
+      <div style="text-align:center;font-size:.75rem;font-weight:800" class="mut">{{ tatti(hm, 60) }}{{ rot }}</div>
       {% endfor %}
     </div>
     <ul style="padding-left:18px;margin:0;font-size:.92rem">
@@ -47,8 +47,8 @@
       <li><b>Próxima aula</b>: da matéria há mais tempo sem estudo, intercalando as matérias.</li>
       <li><b>Prioridade</b>: aula já iniciada perto de {{ cfg.max_dias_sem_ver }} dias sem leitura passa na frente.</li>
       <li><b>Radiante</b>: estudou hoje, bateu leituras e questões do dia e acerto ≥ {{ cfg.meta_acerto }}%.</li>
-      <li><b>Bravo</b>: meta do dia longe, aulas paradas há mais de {{ cfg.max_dias_sem_ver }} dias ou acerto baixo.</li>
-      <li><b>Furioso</b>: 3 dias ou mais sem estudar.</li>
+      <li><b>Brava</b>: meta do dia longe, aulas paradas há mais de {{ cfg.max_dias_sem_ver }} dias ou acerto baixo.</li>
+      <li><b>Furiosa</b>: 3 dias ou mais sem estudar.</li>
     </ul>
     <p style="margin-top:14px">Agora: <b>{{ h.titulo }}</b></p>
   </div>

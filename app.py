@@ -12,7 +12,7 @@ import time as _time
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from flask import (Flask, abort, flash, jsonify, redirect, render_template, request,
+from flask import (Flask, abort, flash, g, jsonify, redirect, render_template, request,
                    send_file, session, url_for)
 from flask_sqlalchemy import SQLAlchemy
 from jinja2 import ChoiceLoader, FileSystemLoader
@@ -505,7 +505,7 @@ def parse_gabarito_texto(txt, exigir_secao=False, manual=False):
 
 
 # --------------------------------------------------------------------------- #
-# Estatísticas, XP, ofensiva e humor do Tatti
+# Estatísticas, XP, ofensiva e humor da Tatti
 # --------------------------------------------------------------------------- #
 def inicio_semana(d=None):
     d = d or hoje()
@@ -549,7 +549,7 @@ def nivel(xp):
 FALAS = {
     "radiante": ["Isso é ritmo de aprovado! Continue assim.",
                  "Você está voando! O cargo está ficando com o seu nome.",
-                 "Meta batida. Estou orgulhoso de você!"],
+                 "Meta batida. Estou orgulhosa de você!"],
     "feliz": ["Bom trabalho! Falta pouco para fechar as metas.",
               "Estamos no caminho certo. Mais um empurrão!",
               "Gostei de ver. Não pare agora."],
@@ -560,12 +560,12 @@ FALAS = {
               "Assim não dá! Cadê o estudo de hoje?",
               "O edital não vai se estudar sozinho."],
     "furioso": ["VOCÊ SUMIU! A prova não vai esperar.",
-                "Estou furioso! Volte agora para os estudos.",
+                "Estou furiosa! Volte agora para os estudos.",
                 "Três dias sem estudar?! Abra um PDF já."],
 }
 TITULOS = {"radiante": "Tatti está radiante", "feliz": "Tatti está feliz",
-           "neutro": "Tatti está de olho", "bravo": "Tatti está bravo",
-           "furioso": "Tatti está furioso"}
+           "neutro": "Tatti está de olho", "bravo": "Tatti está brava",
+           "furioso": "Tatti está furiosa"}
 
 
 def humor_por_pct(pct, meta):
@@ -770,9 +770,10 @@ def calcular_humor():
     dias = dias_atividade()
     h = hoje()
     if not dias:
-        return {"humor": "neutro", "titulo": "Oi! Eu sou o Tatti",
+        g.humor_atual = "neutro"
+        return {"humor": "neutro", "titulo": "Oi! Eu sou a Tatti",
                 "fala": "Vou acompanhar seus estudos. Bata a meta do dia e eu fico feliz; "
-                        "suma e eu fico bravo. Comece enviando o PDF da primeira aula!",
+                        "suma e eu fico brava. Comece enviando o PDF da primeira aula!",
                 "motivos": [], "dia": s}
     motivos, pts = [], 0
     sem = (h - max(dias)).days
@@ -837,6 +838,7 @@ def calcular_humor():
         humor = "bravo"
     else:
         humor = "furioso"
+    g.humor_atual = humor
     return {"humor": humor, "titulo": TITULOS[humor], "fala": random.choice(FALAS[humor]),
             "motivos": motivos, "dia": s}
 
@@ -896,13 +898,39 @@ def f_kb(v):
 @app.context_processor
 def contexto():
     cfg = configs()
-    return {"cfg": cfg, "dias_prova": dias_para_prova(cfg), "meta_acerto": cfg_num(cfg, "meta_acerto")}
+    return {"cfg": cfg, "dias_prova": dias_para_prova(cfg), "meta_acerto": cfg_num(cfg, "meta_acerto"),
+            "humor_atual": humor_atual()}
+
+
+def humor_atual():
+    """Humor da Tatti (calculado uma vez por requisição) — usado no ícone do app e no logo."""
+    if "humor_atual" not in g:
+        try:
+            calcular_humor()
+        except Exception:
+            g.humor_atual = "neutro"
+    return g.humor_atual
+
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    h = humor_atual()
+    cores = {"furioso": "#e5484d", "bravo": "#f0893a", "neutro": "#8e4ec6", "feliz": "#2fb36d", "radiante": "#e8a317"}
+    dados = {
+        "name": "DUOTATTI", "short_name": "DUOTATTI", "start_url": "/", "scope": "/",
+        "display": "standalone", "background_color": "#f6f7f9", "theme_color": cores.get(h, "#8e4ec6"),
+        "icons": [{"src": url_for("static", filename=f"icones/{h}-{t}.png"), "sizes": f"{t}x{t}",
+                   "type": "image/png", "purpose": "any"} for t in (192, 512)],
+    }
+    resp = app.response_class(json.dumps(dados, ensure_ascii=False), mimetype="application/manifest+json")
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 @app.before_request
 def exigir_senha():
     senha = os.environ.get("APP_PASSWORD")
-    if not senha or request.endpoint in ("login", "static") or session.get("ok"):
+    if not senha or request.endpoint in ("login", "static", "manifest") or session.get("ok"):
         return None
     return redirect(url_for("login", next=request.path))
 
@@ -1341,7 +1369,7 @@ def metas():
             c.valor = v[:200]
             db.session.add(c)
         db.session.commit()
-        flash("Metas salvas. O Tatti já está de olho!", "ok")
+        flash("Metas salvas. A Tatti já está de olho!", "ok")
         return redirect(url_for("metas"))
     return render_template("metas.html", h=calcular_humor(), p=plano_do_dia())
 
