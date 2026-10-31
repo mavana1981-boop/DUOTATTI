@@ -15,6 +15,7 @@ input[type=text].renomear.salvo{border-color:var(--ok)}
 .lapis{flex:none;width:16px;height:16px;color:var(--mut);opacity:.6}
 .nome-ed:focus-within .lapis{display:none}
 .excluir{margin:0}
+select option.com-aula{color:#2563c9;font-weight:700}
 .ordenar{flex:none;display:flex;flex-direction:column;align-items:center;gap:0;margin-right:-4px}
 .seta-o{border:0;background:transparent;color:var(--mut);font-size:.85rem;line-height:1;padding:5px 9px;cursor:pointer;border-radius:6px}
 .seta-o:hover,.seta-o:focus-visible{color:var(--ink);background:var(--soft)}
@@ -98,9 +99,10 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
       <input type="file" name="pdfs" accept="application/pdf,.pdf" multiple required>
       <p class="hint">Pode enviar vários de uma vez — cada PDF vira uma aula com o nome do arquivo (dá para renomear depois).</p>
       <label class="f">Vincular a um tópico ou assunto (opcional)</label>
-      <select name="topico_id"><option value="">—</option>{{ opcoes(m) }}</select>
+      <select name="topico_id" class="sel-topico"><option value="">—</option>{{ opcoes(m) }}</select>
       <label class="f">…ou crie um assunto novo</label>
       <input type="text" name="novo_assunto" placeholder="Ex.: Direitos sociais (arts. 6º a 11)">
+      <p class="hint">Em <b style="color:#2563c9">azul</b>, com a contagem entre parênteses: assuntos que já têm aula vinculada.</p>
       <p class="hint">O assunto novo fica disponível para as próximas aulas e para os cadernos de questões.</p>
       <div style="margin-top:14px"><button class="btn azul">Enviar</button></div>
     </form>

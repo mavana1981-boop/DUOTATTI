@@ -1,4 +1,9 @@
-{# Lista de tópicos agrupada: item do edital (optgroup) -> assuntos; depois "Seus assuntos" #}
+{# Lista de tópicos agrupada: item do edital (optgroup) -> assuntos; depois "Seus assuntos".
+   Assuntos que já têm aula vinculada ficam em azul e com a contagem de aulas. #}
+{% macro _opt(m, t, sel, rotulo) %}
+{%- set n = m.aulas|selectattr('topico_id', 'equalto', t.id)|list|length -%}
+<option value="{{ t.id }}" {{ 'selected' if t.id == sel }}{% if n %} class="com-aula" style="color:#2563c9;font-weight:700"{% endif %}>{{ rotulo }}{% if n %} ({{ n }} aula{{ '' if n == 1 else 's' }}){% endif %}</option>
+{%- endmacro %}
 {% macro opcoes(m, sel=None) %}
 {% set ed = m.topicos|rejectattr('personalizado')|list %}
 {% set pe = m.topicos|selectattr('personalizado')|list %}
@@ -6,10 +11,10 @@
 {% for t in ed %}{% if (t.grupo or 'Edital') not in vistos %}{% set _ = vistos.append(t.grupo or 'Edital') %}{% endif %}{% endfor %}
 {% for g in vistos %}
 <optgroup label="{{ g }}">
-  {% for t in ed if (t.grupo or 'Edital') == g %}<option value="{{ t.id }}" {{ 'selected' if t.id == sel }}>{{ ('Todo o item — ' ~ g) if t.nome == 'Todo o item' else t.nome }}</option>{% endfor %}
+  {% for t in ed if (t.grupo or 'Edital') == g %}{{ _opt(m, t, sel, ('Todo o item — ' ~ g) if t.nome == 'Todo o item' else t.nome) }}{% endfor %}
 </optgroup>
 {% endfor %}
 {% if pe %}<optgroup label="Seus assuntos">
-  {% for t in pe %}<option value="{{ t.id }}" {{ 'selected' if t.id == sel }}>{{ t.nome }}</option>{% endfor %}
+  {% for t in pe %}{{ _opt(m, t, sel, t.nome) }}{% endfor %}
 </optgroup>{% endif %}
 {% endmacro %}
