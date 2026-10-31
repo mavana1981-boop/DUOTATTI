@@ -1,11 +1,12 @@
-.vinc{margin-top:5px;display:flex;flex-direction:column;gap:5px;align-items:flex-start;max-width:100%}
+.vinc{margin-top:6px;display:flex;flex-direction:column;gap:5px;align-items:stretch;max-width:100%}
+.chips-t{min-width:0}
 .chips-t{display:flex;flex-wrap:wrap;gap:5px}
-.chip-t{display:inline-flex;align-items:center;gap:2px;max-width:100%;font-size:.78rem;font-weight:700;line-height:1.25;padding:3px 3px 3px 10px;border-radius:999px;
+.chip-t{display:inline-flex;align-items:center;gap:2px;max-width:100%;font-size:.78rem;font-weight:700;line-height:1.3;padding:4px 3px 4px 10px;border-radius:10px;
   background:color-mix(in srgb,var(--blue) 12%,transparent);border:2px solid color-mix(in srgb,var(--blue) 40%,transparent);color:var(--ink)}
 .chip-t.pers{background:color-mix(in srgb,var(--xp) 14%,transparent);border-color:color-mix(in srgb,var(--xp) 45%,transparent)}
-.chip-t>span{overflow:hidden;text-overflow:ellipsis}
+.chip-t>span{min-width:0;overflow-wrap:anywhere}
 .chip-t .x{flex:none;border:0;background:transparent;color:var(--mut);font-size:1rem;line-height:1;width:22px;height:22px;border-radius:50%;cursor:pointer;padding:0}
 .chip-t .x:hover,.chip-t .x:focus-visible{background:color-mix(in srgb,var(--err) 15%,transparent);color:var(--err)}
-.vazio-t{font-size:.78rem;color:var(--mut);border:2px dashed var(--line);border-radius:999px;padding:2px 10px}
-select.add-t{width:auto;max-width:100%;padding:3px 26px 3px 10px;font-size:.8rem;font-weight:700;border-radius:999px;border:2px dashed var(--line);background-color:transparent;color:var(--blue);cursor:pointer}
+.vazio-t{align-self:flex-start;font-size:.78rem;color:var(--mut);border:2px dashed var(--line);border-radius:10px;padding:2px 10px}
+select.add-t{align-self:flex-start;width:auto;max-width:100%;padding:3px 26px 3px 10px;font-size:.8rem;font-weight:700;border-radius:999px;border:2px dashed var(--line);background-color:transparent;color:var(--blue);cursor:pointer}
 .vinc.salvando{opacity:.6}

@@ -8,13 +8,21 @@
 .item:last-child{border-bottom:0}
 .item .nome{font-weight:800;line-height:1.25}
 .item .det{color:var(--mut);font-size:.82rem}
-.nome-ed{display:flex;align-items:center;gap:4px}
-input[type=text].renomear{flex:1;min-width:0;font:inherit;font-weight:800;color:var(--ink);background:transparent;border:2px solid transparent;border-radius:9px;padding:3px 6px;width:auto;margin-left:-8px;text-overflow:ellipsis}
-input[type=text].renomear:hover{border-color:var(--line)}
-input[type=text].renomear:focus{outline:none;border-color:var(--blue);background:var(--bg)}
-input[type=text].renomear.salvo{border-color:var(--ok)}
-.lapis{flex:none;width:16px;height:16px;color:var(--mut);opacity:.6}
-.nome-ed:focus-within .lapis{display:none}
+.aula-item{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:start}
+.aula-corpo{min-width:0}
+.aula-acoes{display:flex;align-items:center;gap:8px;align-self:center}
+.nome-ed{display:flex;align-items:flex-start;gap:4px}
+.titulo-txt{font-weight:800;line-height:1.3;overflow-wrap:anywhere}
+.titulo-txt.salvo{color:var(--ok)}
+input[type=text].renomear{flex:1;min-width:0;font:inherit;font-weight:800;padding:5px 8px;border-radius:9px}
+.lapis-btn{flex:none;border:0;background:transparent;color:var(--mut);cursor:pointer;padding:2px 4px;border-radius:7px;line-height:0}
+.lapis-btn:hover,.lapis-btn:focus-visible{background:var(--soft);color:var(--ink)}
+.lapis{width:16px;height:16px}
+@media (max-width:600px){
+  .aula-item{grid-template-columns:auto 1fr;row-gap:8px}
+  .aula-acoes{grid-column:2;align-self:start}
+  .aula-acoes .btn{flex:1}
+}
 .excluir{margin:0}
 select option.com-aula{color:#2563c9;font-weight:700}
 .ordenar{flex:none;display:flex;flex-direction:column;align-items:center;gap:0;margin-right:-4px}
@@ -117,26 +125,29 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
       <span class="alca" title="Arraste para reordenar" aria-hidden="true">⠿</span>
       <button type="button" class="seta-o desce" aria-label="Mover {{ a.titulo }} para baixo" title="Descer">▼</button>
     </div>
-    <div class="num {{ 'lida' if n }} {{ 'completa' if n >= s.alvo }}" title="{{ n }} de {{ s.alvo }} leituras">{{ n }}/{{ s.alvo }}</div>
-    <div style="flex:1;min-width:0">
+    <div class="aula-corpo">
       <div class="nome-ed">
-        <input type="text" class="renomear" value="{{ a.titulo }}" data-aula="{{ a.id }}" data-arquivo="{{ a.arquivo_nome or '' }}"
-               maxlength="200" aria-label="Nome da aula" title="Clique para renomear">
-        <svg class="lapis" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z M14 6l4 4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>
+        <span class="titulo-txt">{{ a.titulo }}</span>
+        <input type="text" class="renomear" value="{{ a.titulo }}" data-aula="{{ a.id }}" maxlength="200" aria-label="Nome da aula" hidden>
+        <button type="button" class="lapis-btn" aria-label="Renomear {{ a.titulo }}" title="Renomear">
+          <svg class="lapis" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z M14 6l4 4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>
+        </button>
       </div>
       <div class="det">
-        {% if n %}última leitura {{ a.leituras[-1].lida_em|dt }}{% else %}ainda não lida{% endif %}
-        {% if a.paginas %} · {{ a.paginas }} pág.{% endif %}
+        {% if n %}última leitura {{ a.leituras[-1].lida_em|dt }}{% else %}ainda não lida{% endif %}{% if a.paginas %} · {{ a.paginas }} pág.{% endif %}
       </div>
       {{ vinculos(m, a) }}
     </div>
-    <a class="btn mini {{ 'claro' if n else '' }}" href="{{ url_for('aula_ver', aid=a.id) }}">{{ 'Reler' if n else 'Ler' }}</a>
-    <form method="post" action="{{ url_for('aula_excluir', aid=a.id) }}" class="excluir"
-          onsubmit="return confirm('Excluir a aula “' + {{ a.titulo|tojson|forceescape }} + '” e o histórico de leituras dela?')">
-      <button class="lixo" title="Excluir aula" aria-label="Excluir aula {{ a.titulo }}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
-    </form>
+    <div class="aula-acoes">
+      <div class="num {{ 'lida' if n }} {{ 'completa' if n >= s.alvo }}" title="{{ n }} de {{ s.alvo }} leituras">{{ n }}/{{ s.alvo }}</div>
+      <a class="btn mini {{ 'claro' if n else '' }}" href="{{ url_for('aula_ver', aid=a.id) }}">{{ 'Reler' if n else 'Ler' }}</a>
+      <form method="post" action="{{ url_for('aula_excluir', aid=a.id) }}" class="excluir"
+            onsubmit="return confirm('Excluir a aula “' + {{ a.titulo|tojson|forceescape }} + '” e o histórico de leituras dela?')">
+        <button class="lixo" title="Excluir aula" aria-label="Excluir aula {{ a.titulo }}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </form>
+    </div>
   </div>
   {% else %}
   <p class="mut">Nenhuma aula nesta matéria.</p>
@@ -229,20 +240,26 @@ document.querySelectorAll('.item-edital').forEach(sel => {
     } catch (_) { alert('Não foi possível salvar o item do edital.'); sel.value = orig; }
   });
 });
-document.querySelectorAll('.renomear').forEach(i => {
-  let orig = i.value;
-  i.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); i.blur(); }
-    if (e.key === 'Escape') { i.value = orig; i.blur(); }
+document.querySelectorAll('.aula-item .nome-ed').forEach(box => {
+  const txt = box.querySelector('.titulo-txt'), inp = box.querySelector('.renomear'), lap = box.querySelector('.lapis-btn');
+  let orig = inp.value;
+  const editar = () => { txt.hidden = true; lap.hidden = true; inp.hidden = false; inp.focus(); inp.select(); };
+  const fechar = () => { inp.hidden = true; txt.hidden = false; lap.hidden = false; };
+  lap.addEventListener('click', editar);
+  txt.addEventListener('dblclick', editar);
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+    if (e.key === 'Escape') { inp.value = orig; inp.blur(); }
   });
-  i.addEventListener('blur', async () => {
-    if (i.value.trim() === orig) { i.value = orig; return; }
+  inp.addEventListener('blur', async () => {
+    if (inp.value.trim() === orig) { inp.value = orig; fechar(); return; }
     try {
-      const r = await fetch('/api/aula/' + i.dataset.aula + '/titulo', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({titulo: i.value})});
+      const r = await fetch('/api/aula/' + inp.dataset.aula + '/titulo', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({titulo: inp.value})});
       const d = await r.json(); if (!d.ok) throw 0;
-      i.value = orig = d.titulo;
-      i.classList.add('salvo'); setTimeout(() => i.classList.remove('salvo'), 1200);
-    } catch (_) { alert('Não foi possível renomear. Tente de novo.'); i.value = orig; }
+      inp.value = orig = d.titulo; txt.textContent = d.titulo;
+      txt.classList.add('salvo'); setTimeout(() => txt.classList.remove('salvo'), 1200);
+    } catch (_) { alert('Não foi possível renomear. Tente de novo.'); inp.value = orig; }
+    fechar();
   });
 });
 </script>

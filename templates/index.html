@@ -117,6 +117,8 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
     </li>
     {% endfor %}
   </ol>
+  {% elif p.meta_hoje and p.feitas_hoje > p.meta_hoje %}
+  <p style="font-weight:800;color:var(--ok)">Você leu {{ p.feitas_hoje - p.meta_hoje }} a mais que o planejado hoje! Reajustei o plano: a partir de amanhã são {{ p.meta_amanha }} leitura{{ '' if p.meta_amanha == 1 else 's' }} por dia.</p>
   {% elif p.meta_hoje and p.feitas_hoje >= p.meta_hoje %}
   <p style="font-weight:800;color:var(--ok)">Leituras de hoje concluídas! Quer adiantar? Qualquer leitura extra diminui a meta dos próximos dias.</p>
   {% elif not p.meta_hoje %}

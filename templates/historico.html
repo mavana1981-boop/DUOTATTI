@@ -68,12 +68,17 @@
 .ae-txt a{color:var(--ink);text-decoration:none}
 .ae-txt small{font-size:.78rem}
 .ae-txt small.sem{color:var(--xp2)}
-.pips{display:flex;gap:5px;align-items:center}
+.pips{display:flex;gap:2px;align-items:flex-start}
+.pipc{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:38px}
+.pd{font-size:.66rem;font-weight:800;color:var(--mut);white-space:nowrap;line-height:1}
+.pd.feita{color:var(--c)}
+.pd.prev{color:var(--blue)}
+.pd.hoje{color:#fff;background:var(--blue);border-radius:6px;padding:2px 4px}
 .pip{width:18px;height:18px;border-radius:50%;border:2px solid var(--c);background:transparent;padding:0;cursor:pointer;transition:transform .1s,background .15s}
 .pip.on{background:var(--c)}
 .pip:hover{transform:scale(1.2)}
 .pip:focus-visible{outline:3px solid var(--xp);outline-offset:1px}
-.pn{min-width:30px;text-align:right;color:var(--mut);font-weight:800}
+.pn{min-width:30px;text-align:right;color:var(--mut);font-weight:800;align-self:center}
 @media (max-width:700px){.aulas-ev li{grid-template-columns:24px 1fr}.pips{grid-column:2}}
 .bola:focus-visible{outline:3px solid var(--xp);outline-offset:2px}
 .bola.pulso{animation:pulso .35s}
@@ -169,16 +174,23 @@
             {% elif a.leituras|length >= s.alvo %}<small class="prox" style="color:var(--ok)">Concluída — {{ s.alvo }} leituras</small>{% endif %}
           </div>
           <div class="pips" role="group" aria-label="Leituras de {{ a.titulo }}">
+            {% set pa = plano_aula.get(a.id, {}) %}
             {% for k in range(1, s.alvo + 1) %}
-            <button type="button" class="pip {{ 'on' if k <= n }}" data-k="{{ k }}"
-              title="{{ k }}ª leitura{{ ' — ' ~ (a.leituras[k-1].lida_em|dt) if k <= n else '' }}" aria-label="{{ k }}ª leitura{{ ' (feita)' if k <= n }}"></button>
+            {% set feita = a.leituras[k-1].lida_em if k <= n else none %}
+            {% set prev = pa.get(k) %}
+            <span class="pipc">
+              <button type="button" class="pip {{ 'on' if k <= n }}" data-k="{{ k }}"
+                title="{{ k }}ª leitura — {{ ('feita em ' ~ (feita|dt)) if feita else (('prevista para ' ~ prev.strftime('%d/%m')) if prev else 'sem data prevista') }}"
+                aria-label="{{ k }}ª leitura{{ ' (feita)' if k <= n }}"></button>
+              <small class="pd {{ 'feita' if feita else ('prev' if prev else '') }} {{ 'hoje' if prev and prev == cal_hoje }}">{{ feita.strftime('%d/%m') if feita else (('hoje' if prev == cal_hoje else prev.strftime('%d/%m')) if prev else '—') }}</small>
+            </span>
             {% endfor %}
             <small class="pn">{{ n }}/{{ s.alvo }}</small>
           </div>
         </li>
         {% endfor %}
       </ul>
-      <p class="hint">Bolinha vazia: registra uma leitura. Última bolinha preenchida: desfaz a leitura.</p>
+      <p class="hint">Embaixo de cada bolinha: data em que a leitura foi feita (na cor da matéria) ou a data prevista (em azul). Bolinha vazia registra uma leitura; a última preenchida desfaz. O planejamento se ajusta sozinho quando você lê a mais ou a menos.</p>
       {% endif %}
       <h3>Assunto das questões</h3>
       {% for c in m.cadernos %}
@@ -282,6 +294,9 @@ function pintar(aid, n, ultima) {
   });
   document.querySelectorAll('.aulas-ev li[data-aula="' + aid + '"]').forEach(li => {
     li.querySelectorAll('.pip').forEach(pp => pp.classList.toggle('on', +pp.dataset.k <= n));
+    const pk = li.querySelectorAll('.pd'), hoje = new Date().toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'});
+    if (pk[n-1] && !pk[n-1].classList.contains('feita')) { pk[n-1].textContent = hoje; pk[n-1].className = 'pd feita'; }
+    if (pk[n] && pk[n].classList.contains('feita')) { pk[n].textContent = '↻'; pk[n].className = 'pd'; pk[n].title = 'recarregue para ver a nova previsão'; }
     const pn = li.querySelector('.pn'); pn.textContent = n + '/' + pn.textContent.split('/')[1];
   });
 }

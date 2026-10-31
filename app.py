@@ -711,7 +711,8 @@ def plano_do_dia():
     return {"alvo": alvo, "limite": limite, "dias": max(dias, 0), "fase": fase, "max_dias": max_dias,
             "restante": restante, "meta_hoje": meta_hoje,
             "aulas_faltando": sum(1 for e in est.values() if e["n"] < alvo),
-            "ritmo": (restante_inicio / dias) if fase == "leitura" and dias > 0 else 0, "feitas_hoje": feitas_hoje, "fila": fila,
+            "ritmo": (restante_inicio / dias) if fase == "leitura" and dias > 0 else 0,
+            "meta_amanha": math.ceil(restante / (dias - 1)) if fase == "leitura" and dias > 1 and restante else 0, "feitas_hoje": feitas_hoje, "fila": fila,
             "atrasadas": atrasadas, "est": est, "total_aulas": len(aulas),
             "total_necessario": total_necessario, "total_feito": total_necessario - restante}
 
@@ -791,7 +792,11 @@ def dados_calendario():
                 {"t": a.titulo, "m": a.materia.nome, "c": a.materia.cor, "v": vez, "u": urg, "id": a.id})
     marcos = {_data_cfg(cfg, "data_limite_leituras").isoformat(): "Fim das leituras",
               _data_cfg(cfg, "data_prova").isoformat(): "Prova"}
-    return {"dias": cal, "marcos": marcos, "hoje": hoje().isoformat()}, proxima
+    plano_aula = {}  # {aula_id: {vez: data prevista}}
+    for d, itens in previstas.items():
+        for a, vez, urg in itens:
+            plano_aula.setdefault(a.id, {})[vez] = d
+    return {"dias": cal, "marcos": marcos, "hoje": hoje().isoformat()}, proxima, plano_aula
 
 
 def bateria_do_dia():
@@ -1660,9 +1665,9 @@ def historico():
     eventos = ([("leitura", l.lida_em, l) for l in Leitura.query.order_by(Leitura.lida_em.desc()).limit(15)]
                + [("questoes", t.feita_em, t) for t in reversed(tents[-15:])])
     eventos.sort(key=lambda e: e[1], reverse=True)
-    cal, proxima = dados_calendario()
+    cal, proxima, plano_aula = dados_calendario()
     return render_template("historico.html", materias=[(m, stats_materia(m), por_assunto(m)) for m in materias],
-                           cal=cal, proxima=proxima, cal_hoje=hoje(), ordem_cards=ordem_cards(),
+                           cal=cal, proxima=proxima, plano_aula=plano_aula, cal_hoje=hoje(), ordem_cards=ordem_cards(),
                            pontos=pontos, semanas=semanas, eventos=eventos[:20])
 
 
