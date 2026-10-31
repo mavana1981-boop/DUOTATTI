@@ -15,6 +15,17 @@ input[type=text].renomear.salvo{border-color:var(--ok)}
 .lapis{flex:none;width:16px;height:16px;color:var(--mut);opacity:.6}
 .nome-ed:focus-within .lapis{display:none}
 .excluir{margin:0}
+.ordenar{flex:none;display:flex;flex-direction:column;align-items:center;gap:0;margin-right:-4px}
+.seta-o{border:0;background:transparent;color:var(--mut);font-size:.85rem;line-height:1;padding:5px 9px;cursor:pointer;border-radius:6px}
+.seta-o:hover,.seta-o:focus-visible{color:var(--ink);background:var(--soft)}
+.aula-item:first-child .sobe,.aula-item:last-child .desce{visibility:hidden}
+.alca{cursor:grab;color:var(--mut);font-size:1.1rem;line-height:1;padding:2px 4px;touch-action:none;user-select:none}
+.alca:active{cursor:grabbing}
+.aula-item.fantasma{opacity:.35;background:var(--soft);border-radius:12px}
+.aula-item.escolhida{background:var(--card);box-shadow:0 8px 24px rgba(0,0,0,.15);border-radius:12px}
+.aula-item.movida{animation:movida .6s}
+@keyframes movida{from{background:color-mix(in srgb,var(--ok) 18%,transparent)}to{background:transparent}}
+#lista-aulas.salvando{opacity:.7}
 select.item-edital{width:auto;max-width:100%;margin-top:4px;padding:3px 26px 3px 8px;font-size:.8rem;font-weight:700;border-radius:999px;
   border:2px solid color-mix(in srgb,{{ m.cor }} 45%,transparent);background-color:color-mix(in srgb,{{ m.cor }} 10%,transparent);color:var(--ink);cursor:pointer}
 select.item-edital.vazio{border-style:dashed;border-color:var(--line);background-color:transparent;color:var(--mut)}
@@ -93,9 +104,15 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
       <div style="margin-top:14px"><button class="btn azul">Enviar</button></div>
     </form>
   </details>
+  <div id="lista-aulas" data-materia="{{ m.id }}">
   {% for a in m.aulas %}
   {% set n = a.leituras|length %}
-  <div class="item">
+  <div class="item aula-item" data-id="{{ a.id }}">
+    <div class="ordenar">
+      <button type="button" class="seta-o sobe" aria-label="Mover {{ a.titulo }} para cima" title="Subir">▲</button>
+      <span class="alca" title="Arraste para reordenar" aria-hidden="true">⠿</span>
+      <button type="button" class="seta-o desce" aria-label="Mover {{ a.titulo }} para baixo" title="Descer">▼</button>
+    </div>
     <div class="num {{ 'lida' if n }}">{{ n }}x</div>
     <div style="flex:1;min-width:0">
       <div class="nome-ed">
@@ -122,6 +139,8 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
   {% else %}
   <p class="mut">Nenhuma aula ainda. Envie o primeiro PDF acima.</p>
   {% endfor %}
+  </div>
+  {% if m.aulas|length > 1 %}<p class="hint" id="dica-ordem">Arraste pela alça ⠿ ou use ▲▼ para mudar a ordem das aulas.</p>{% endif %}
 </section>
 
 <section class="card" id="questoes">
@@ -169,7 +188,31 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
 </section>
 {% endblock %}
 {% block js %}
+<script src="{{ url_for('static', filename='Sortable.min.js') }}"></script>
 <script>
+(function(){
+  const lista = document.getElementById('lista-aulas'); if (!lista) return;
+  const salvar = async () => {
+    const ids = [...lista.querySelectorAll('.aula-item')].map(e => +e.dataset.id);
+    lista.classList.add('salvando');
+    try {
+      const r = await fetch('/api/materia/' + lista.dataset.materia + '/ordem-aulas', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ids})});
+      if (!(await r.json()).ok) throw 0;
+    } catch (_) { alert('Não foi possível salvar a nova ordem. A página será recarregada.'); location.reload(); }
+    lista.classList.remove('salvando');
+  };
+  const piscar = el => { el.classList.remove('movida'); void el.offsetWidth; el.classList.add('movida'); };
+  lista.addEventListener('click', e => {
+    const b = e.target.closest('.seta-o'); if (!b) return;
+    const item = b.closest('.aula-item');
+    if (b.classList.contains('sobe') && item.previousElementSibling) item.parentNode.insertBefore(item, item.previousElementSibling);
+    else if (b.classList.contains('desce') && item.nextElementSibling) item.parentNode.insertBefore(item.nextElementSibling, item);
+    else return;
+    piscar(item); b.focus(); salvar();
+  });
+  if (window.Sortable) Sortable.create(lista, {handle: '.alca', draggable: '.aula-item', animation: 150,
+    ghostClass: 'fantasma', chosenClass: 'escolhida', forceFallback: true, fallbackTolerance: 3, onEnd: ev => { if (ev.oldIndex !== ev.newIndex) { piscar(ev.item); salvar(); } }});
+})();
 document.querySelectorAll('.item-edital').forEach(sel => {
   let orig = sel.value;
   sel.addEventListener('change', async () => {

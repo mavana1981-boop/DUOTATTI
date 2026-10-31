@@ -37,7 +37,8 @@ def hoje():
 # App / banco
 # --------------------------------------------------------------------------- #
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"))
+app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"),
+            static_folder=os.path.join(BASE_DIR, "static"))
 # procura os .html em templates/ e, se não achar, na raiz do projeto
 app.jinja_env.loader = ChoiceLoader([FileSystemLoader(os.path.join(BASE_DIR, "templates")),
                                      FileSystemLoader(BASE_DIR)])
@@ -60,7 +61,7 @@ class Materia(db.Model):
     ordem = db.Column(db.Integer, default=0)
     topicos = db.relationship("Topico", backref="materia", order_by="Topico.ordem",
                               cascade="all, delete-orphan", lazy="selectin")
-    aulas = db.relationship("Aula", backref="materia", order_by="Aula.criada_em",
+    aulas = db.relationship("Aula", backref="materia", order_by="(Aula.ordem, Aula.id)",
                             cascade="all, delete-orphan", lazy="selectin")
     cadernos = db.relationship("Caderno", backref="materia", order_by="Caderno.criado_em",
                                cascade="all, delete-orphan", lazy="selectin")
@@ -92,6 +93,7 @@ class Aula(db.Model):
     paginas = db.Column(db.Integer)
     tamanho = db.Column(db.Integer)
     criada_em = db.Column(db.DateTime, default=agora)
+    ordem = db.Column(db.Integer)  # posição na lista da matéria (o usuário reordena)
     topico = db.relationship("Topico")
     leituras = db.relationship("Leitura", backref="aula", order_by="Leitura.lida_em",
                                cascade="all, delete-orphan", lazy="selectin")
@@ -216,7 +218,7 @@ def seed():
     db.session.commit()
 
 
-NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)")]
+NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)"), ("aula", "ordem", "INTEGER")]
 
 
 def migrar(conn):
@@ -321,6 +323,19 @@ def assuntos_para_topicos():
     db.session.commit()
 
 
+def numerar_aulas():
+    """Aulas sem posição (bancos antigos) entram no fim, na ordem de envio."""
+    for m in Materia.query.all():
+        sem = Aula.query.filter_by(materia_id=m.id, ordem=None).order_by(Aula.criada_em, Aula.id).all()
+        if not sem:
+            continue
+        prox = (db.session.query(db.func.max(Aula.ordem)).filter_by(materia_id=m.id).scalar() or 0) + 1
+        for a in sem:
+            a.ordem = prox
+            prox += 1
+    db.session.commit()
+
+
 def _preparar_banco():
     if db.engine.dialect.name == "postgresql":
         with db.engine.begin() as conn:
@@ -333,6 +348,7 @@ def _preparar_banco():
     seed()
     atualizar_topicos_edital()
     assuntos_para_topicos()
+    numerar_aulas()
 
 
 def init_db():
@@ -739,13 +755,15 @@ def aula_nova(mid):
     if novo:
         topico_id = garantir_topico(m.id, novo).id
     n = 0
+    prox = (db.session.query(db.func.max(Aula.ordem)).filter_by(materia_id=m.id).scalar() or 0) + 1
     for f in arquivos:
         data, nome = _ler_upload(f)
         if not data:
             continue
         t = nome_padrao(nome)
         db.session.add(Aula(materia_id=m.id, topico_id=topico_id, titulo=t[:200], arquivo_nome=nome[:200],
-                            pdf=data, paginas=contar_paginas(data), tamanho=len(data)))
+                            pdf=data, paginas=contar_paginas(data), tamanho=len(data), ordem=prox))
+        prox += 1
         n += 1
     db.session.commit()
     if n:
@@ -981,6 +999,24 @@ def api_aula_topico(aid):
     a.topico_id = tid
     db.session.commit()
     return jsonify(ok=True, topico_id=tid)
+
+
+@app.post("/api/materia/<int:mid>/ordem-aulas")
+def api_ordem_aulas(mid):
+    """Recebe a lista de ids das aulas na nova ordem."""
+    m = db.get_or_404(Materia, mid)
+    ids = (request.get_json(silent=True) or {}).get("ids") or []
+    minhas = {a.id: a for a in m.aulas}
+    try:
+        ids = [int(i) for i in ids]
+    except (TypeError, ValueError):
+        return jsonify(ok=False), 400
+    if set(ids) != set(minhas):
+        return jsonify(ok=False, erro="lista incompleta"), 400
+    for pos, aid in enumerate(ids, start=1):
+        minhas[aid].ordem = pos
+    db.session.commit()
+    return jsonify(ok=True)
 
 
 @app.post("/api/caderno/<int:cid>/assunto")
