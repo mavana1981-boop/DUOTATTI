@@ -2,6 +2,17 @@
 {% from "_topicos.html" import opcoes %}
 {% block titulo %}Evolução{% endblock %}
 {% block css %}
+.ev-card{position:relative}
+.mover{position:absolute;top:10px;right:10px;display:flex;align-items:center;gap:2px;z-index:2;background:var(--card);border-radius:10px;padding:1px}
+.mv{border:0;background:transparent;color:var(--mut);font-size:.75rem;padding:5px 7px;border-radius:8px;cursor:pointer;line-height:1}
+.mv:hover,.mv:focus-visible{background:var(--soft);color:var(--ink)}
+.alca-c{cursor:grab;color:var(--mut);font-size:1.1rem;padding:2px 4px;touch-action:none;user-select:none}
+#cards-ev>.ev-card:first-child .sobe,#cards-ev>.ev-card:last-child .desce{visibility:hidden}
+.ev-card>h2:first-of-type,.ev-card>.row:first-of-type{padding-right:96px}
+.ev-card.fantasma{opacity:.35}
+.ev-card.escolhida{box-shadow:0 12px 30px rgba(0,0,0,.18)}
+.ev-card.movida{animation:movc .6s}
+@keyframes movc{from{box-shadow:0 0 0 3px var(--ok)}to{box-shadow:none}}
 .cal-leg{display:flex;gap:14px;flex-wrap:wrap;font-size:.78rem;color:var(--mut);font-weight:700;margin:10px 0 8px}
 .cal-leg span{display:flex;gap:5px;align-items:center}
 .lg{width:12px;height:12px;border-radius:50%;display:inline-block}
@@ -83,8 +94,10 @@
 <h1>Sua evolução</h1>
 <p class="sub">Calendário de leituras, acerto por bateria de questões, ritmo semanal e desempenho por matéria.</p>
 
-<section class="card" id="calendario">
-  <div class="row">
+<div id="cards-ev">
+<section class="card ev-card" data-card="calendario" id="calendario">
+  <div class="mover" role="group" aria-label="Mover card Calendário"><button type="button" class="mv sobe" aria-label="Subir card">▲</button><span class="alca-c" title="Arraste para reordenar" aria-hidden="true">⠿</span><button type="button" class="mv desce" aria-label="Descer card">▼</button></div>
+  <div class="row" style="padding-right:96px">
     <h2 style="margin:0">Calendário de leituras</h2>
     <div class="right row" style="gap:6px">
       <button type="button" class="btn claro mini" id="cal-ant" aria-label="Mês anterior">‹</button>
@@ -102,7 +115,8 @@
   <div class="cal-det" id="cal-det" aria-live="polite"></div>
 </section>
 
-<section class="card">
+<section class="card ev-card" data-card="acerto">
+  <div class="mover" role="group" aria-label="Mover card Acerto por bateria"><button type="button" class="mv sobe" aria-label="Subir card">▲</button><span class="alca-c" title="Arraste para reordenar" aria-hidden="true">⠿</span><button type="button" class="mv desce" aria-label="Descer card">▼</button></div>
   <div class="row"><h2 style="margin:0">Acerto por bateria</h2>
     <select id="filtro" class="right" style="width:auto">
       <option value="">Todas as matérias</option>
@@ -113,12 +127,14 @@
   {% else %}<p class="mut">Resolva o primeiro caderno para ver o gráfico.</p>{% endif %}
 </section>
 
-<section class="card">
+<section class="card ev-card" data-card="semanas">
+  <div class="mover" role="group" aria-label="Mover card Últimas 12 semanas"><button type="button" class="mv sobe" aria-label="Subir card">▲</button><span class="alca-c" title="Arraste para reordenar" aria-hidden="true">⠿</span><button type="button" class="mv desce" aria-label="Descer card">▼</button></div>
   <h2>Últimas 12 semanas</h2>
   <div style="position:relative;height:240px"><canvas id="gSemana"></canvas></div>
 </section>
 
-<section class="card">
+<section class="card ev-card" data-card="materias">
+  <div class="mover" role="group" aria-label="Mover card Por matéria"><button type="button" class="mv sobe" aria-label="Subir card">▲</button><span class="alca-c" title="Arraste para reordenar" aria-hidden="true">⠿</span><button type="button" class="mv desce" aria-label="Descer card">▼</button></div>
   <h2>Por matéria</h2>
   <p class="hint" style="margin-top:-6px">Cada círculo é uma aula e vai se colorindo a cada leitura — fica cheio na {{ materias[0][1].alvo if materias else 5 }}ª. Clique no círculo para registrar uma leitura. Toque na matéria para ver as aulas, os assuntos e as bolinhas de cada leitura.</p>
   <div class="pm-cab"><span>Matéria</span><span>Aulas (leituras)</span><span>Questões</span><span>Acerto</span><span>Último</span></div>
@@ -192,7 +208,8 @@
   {% endfor %}
 </section>
 
-<section class="card">
+<section class="card ev-card" data-card="atividade">
+  <div class="mover" role="group" aria-label="Mover card Atividade recente"><button type="button" class="mv sobe" aria-label="Subir card">▲</button><span class="alca-c" title="Arraste para reordenar" aria-hidden="true">⠿</span><button type="button" class="mv desce" aria-label="Descer card">▼</button></div>
   <h2>Atividade recente</h2>
   {% for tipo, quando, obj in eventos %}
   <div class="row" style="padding:8px 0;border-bottom:1px solid var(--line)">
@@ -209,8 +226,17 @@
   </div>
   {% else %}<p class="mut">Nada por aqui ainda.</p>{% endfor %}
 </section>
+</div>
+<p class="hint">Use ⠿ (arrastar) ou ▲▼ no canto de cada card para mudar a ordem. A ordem fica salva.</p>
+<script>
+(function(){ // aplica a ordem salva antes de desenhar
+  const ordem = {{ ordem_cards|tojson }}, box = document.getElementById('cards-ev');
+  ordem.forEach(id => { const c = box.querySelector('[data-card="' + id + '"]'); if (c) box.appendChild(c); });
+})();
+</script>
 {% endblock %}
 {% block js %}
+<script src="{{ url_for('static', filename='Sortable.min.js') }}"></script>
 <script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
 <script>
 const PONTOS = {{ pontos|tojson }}, SEMANAS = {{ semanas|tojson }}, META = {{ meta_acerto }};
@@ -347,6 +373,29 @@ document.querySelectorAll('.assunto').forEach(i => {
   document.getElementById('cal-ant').addEventListener('click', () => { mes--; if (mes < 0) { mes = 11; ano--; } desenhar(); });
   document.getElementById('cal-prox').addEventListener('click', () => { mes++; if (mes > 11) { mes = 0; ano++; } desenhar(); });
   desenhar(); detalhe(CAL.hoje);
+})();
+
+// ---------- ordem dos cards ----------
+(function(){
+  const box = document.getElementById('cards-ev');
+  const salvar = async () => {
+    const ordem = [...box.querySelectorAll(':scope > .ev-card')].map(c => c.dataset.card);
+    try {
+      const r = await fetch('/api/ordem-cards', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ordem})});
+      if (!(await r.json()).ok) throw 0;
+    } catch (_) { alert('Não foi possível salvar a ordem dos cards.'); }
+  };
+  const piscar = c => { c.classList.remove('movida'); void c.offsetWidth; c.classList.add('movida'); };
+  box.addEventListener('click', e => {
+    const b = e.target.closest('.mv'); if (!b || b.closest('.ev-card').parentNode !== box) return;
+    const c = b.closest('.ev-card');
+    if (b.classList.contains('sobe') && c.previousElementSibling) box.insertBefore(c, c.previousElementSibling);
+    else if (b.classList.contains('desce') && c.nextElementSibling) box.insertBefore(c.nextElementSibling, c);
+    else return;
+    piscar(c); c.scrollIntoView({block:'nearest', behavior:'smooth'}); b.focus(); salvar();
+  });
+  if (window.Sortable) Sortable.create(box, {handle:'.alca-c', draggable:'.ev-card', animation:150, forceFallback:true,
+    fallbackTolerance:3, ghostClass:'fantasma', chosenClass:'escolhida', onEnd: ev => { if (ev.oldIndex !== ev.newIndex) { piscar(ev.item); salvar(); } }});
 })();
 </script>
 {% endblock %}

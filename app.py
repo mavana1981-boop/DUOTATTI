@@ -1207,6 +1207,27 @@ def api_ordem_aulas(mid):
     return jsonify(ok=True)
 
 
+CARDS_EVOLUCAO = ["calendario", "acerto", "semanas", "materias", "atividade"]
+
+
+def ordem_cards():
+    salvo = [c for c in (configs().get("ordem_evolucao") or "").split(",") if c in CARDS_EVOLUCAO]
+    return salvo + [c for c in CARDS_EVOLUCAO if c not in salvo]
+
+
+@app.post("/api/ordem-cards")
+def api_ordem_cards():
+    ordem = (request.get_json(silent=True) or {}).get("ordem") or []
+    ordem = [c for c in ordem if c in CARDS_EVOLUCAO]
+    if sorted(set(ordem)) != sorted(CARDS_EVOLUCAO):
+        return jsonify(ok=False), 400
+    c = db.session.get(Config, "ordem_evolucao") or Config(chave="ordem_evolucao")
+    c.valor = ",".join(ordem)
+    db.session.add(c)
+    db.session.commit()
+    return jsonify(ok=True)
+
+
 @app.post("/api/caderno/<int:cid>/assunto")
 def api_caderno_assunto(cid):
     c = db.get_or_404(Caderno, cid)
@@ -1258,7 +1279,7 @@ def historico():
     eventos.sort(key=lambda e: e[1], reverse=True)
     cal, proxima = dados_calendario()
     return render_template("historico.html", materias=[(m, stats_materia(m), por_assunto(m)) for m in materias],
-                           cal=cal, proxima=proxima, cal_hoje=hoje(),
+                           cal=cal, proxima=proxima, cal_hoje=hoje(), ordem_cards=ordem_cards(),
                            pontos=pontos, semanas=semanas, eventos=eventos[:20])
 
 
