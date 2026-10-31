@@ -5,7 +5,7 @@ Plataforma de estudos para o concurso de **Escrevente Técnico Judiciário do TJ
 ## Funcionalidades
 - **Trilha por matéria** (8 matérias e tópicos do edital já cadastrados).
 - **Aulas em PDF**: envio de um ou vários PDFs por matéria; leitura no próprio app; botão "Concluí a leitura" registra a data e a vez (1ª, 2ª, 3ª…).
-- **Cadernos de questões**: envio do PDF das questões + PDF do gabarito (ou gabarito no fim do PDF, ou colado em texto). O app lê o gabarito automaticamente e pede conferência; cartão-resposta A–E com correção, histórico de tentativas e anuladas contando como acerto.
+- **Cadernos de questões**: envio do PDF das questões + PDF do gabarito (ou gabarito no fim do PDF, ou colado em texto). O app lê o gabarito automaticamente e pede conferência; o app reconstrói cada questão (enunciado, alternativas e texto de apoio) e apresenta uma por vez, corrigindo na hora pelo gabarito, que nunca é exibido antes da resposta; o PDF não é mostrado. Histórico de baterias e anuladas contando como acerto.
 - **Tatti**: humor (furioso → bravo → de olho → feliz → radiante) calculado por: estudou hoje, acerto dos últimos 7 dias × meta (80%), leituras e questões da semana (metas proporcionais ao dia). 3+ dias sem estudar = furioso.
 - **XP, nível e ofensiva** (dias seguidos estudando).
 - **Evolução**: gráfico de acerto por bateria (filtrável por matéria) com linha da meta, ritmo das últimas 12 semanas e tabela por matéria.

@@ -1,64 +1,228 @@
 {% extends "base.html" %}
 {% block titulo %}{{ c.titulo }}{% endblock %}
 {% block css %}
-.lay{display:grid;gap:16px;grid-template-columns:1fr}
-@media (min-width:900px){.lay{grid-template-columns:1fr 340px}.cartao{position:sticky;top:76px;max-height:calc(100vh - 96px);overflow:auto}}
-.q{display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid var(--line)}
-.q b{width:34px;flex:none;text-align:right;margin-right:4px}
-.q label{flex:1}
-.q input{position:absolute;opacity:0;pointer-events:none}
-.q span{display:grid;place-items:center;height:36px;border-radius:10px;border:2px solid var(--line);font-weight:900;cursor:pointer;user-select:none;background:var(--card)}
-.q input:checked + span{background:var(--blue);border-color:var(--blue2);color:#fff}
-.q input:focus-visible + span{outline:3px solid var(--xp)}
+.qz{max-width:760px;margin:0 auto}
+.qz-topo{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.qz-topo img{flex:none;width:58px;height:58px;border-radius:16px;background:#fff;box-shadow:0 2px 0 var(--line);transition:transform .2s}
+.qz-topo img.pula{animation:pulaq .5s}
+@keyframes pulaq{40%{transform:translateY(-8px) scale(1.06)}}
+.qz-prog{flex:1}
+.qz-prog .bar{height:16px}
+.qz-prog small{display:flex;justify-content:space-between;color:var(--mut);font-weight:800;margin-top:4px}
+.qz-card{background:var(--card);border:2px solid var(--line);border-radius:20px;padding:18px}
+.qz-n{font-weight:900;color:{{ m.cor }};font-size:.85rem;text-transform:uppercase;letter-spacing:.04em}
+.qz-fonte{color:var(--mut);font-size:.8rem;font-weight:700;margin:2px 0 8px}
+.qz-apoio{margin:0 0 12px;border:2px solid var(--line);border-radius:14px;background:var(--bg)}
+.qz-apoio summary{cursor:pointer;font-weight:800;padding:10px 12px;font-size:.9rem}
+.qz-apoio div{padding:0 14px 12px;white-space:pre-line;line-height:1.55;font-size:.95rem}
+.qz-enun{font-size:1.05rem;line-height:1.55;white-space:pre-line;margin:0 0 14px}
+.qz-alts{display:flex;flex-direction:column;gap:9px}
+.alt{display:flex;gap:12px;align-items:flex-start;text-align:left;width:100%;font:inherit;color:var(--ink);background:var(--card);
+  border:2px solid var(--line);border-bottom-width:4px;border-radius:16px;padding:11px 12px;cursor:pointer;line-height:1.4;transition:transform .05s,border-color .15s,background .15s}
+.alt:hover{border-color:color-mix(in srgb,var(--blue) 50%,var(--line))}
+.alt:active{transform:translateY(2px)}
+.alt .lt{flex:none;width:30px;height:30px;border-radius:9px;border:2px solid var(--line);display:grid;place-items:center;font-weight:900;font-size:.9rem}
+.alt.sel{border-color:var(--blue);background:color-mix(in srgb,var(--blue) 9%,var(--card))}
+.alt.sel .lt{background:var(--blue);border-color:var(--blue);color:#fff}
+.alt.certa{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,var(--card))}
+.alt.certa .lt{background:var(--ok);border-color:var(--ok);color:#fff}
+.alt.errada{border-color:var(--err);background:color-mix(in srgb,var(--err) 10%,var(--card))}
+.alt.errada .lt{background:var(--err);border-color:var(--err);color:#fff}
+.alt[disabled]{cursor:default}
+.alt[disabled]:active{transform:none}
+.qz-aviso{border:2px dashed var(--xp);border-radius:14px;padding:10px 12px;margin-bottom:12px;font-size:.9rem;background:color-mix(in srgb,var(--xp) 8%,transparent)}
+.qz-letras{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.qz-letras .alt{justify-content:center}
+.qz-fb{display:none;border-radius:16px;padding:12px 14px;margin-top:14px;font-weight:800}
+.qz-fb.ok{display:block;background:color-mix(in srgb,var(--ok) 15%,var(--card));color:var(--ok2);border:2px solid var(--ok)}
+.qz-fb.erro{display:block;background:color-mix(in srgb,var(--err) 12%,var(--card));color:var(--err2);border:2px solid var(--err)}
+.qz-acoes{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.qz-acoes .right{margin-left:auto}
+.qz-mapa{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px}
+.qz-mapa button{width:34px;height:34px;border-radius:10px;border:2px solid var(--line);background:var(--card);font:inherit;font-weight:900;font-size:.8rem;cursor:pointer;color:var(--ink)}
+.qz-mapa button.ok{background:var(--ok);border-color:var(--ok);color:#fff}
+.qz-mapa button.erro{background:var(--err);border-color:var(--err);color:#fff}
+.qz-mapa button.atual{outline:3px solid var(--blue);outline-offset:1px}
+.inicio{text-align:center}
+.inicio img{width:120px;height:120px;border-radius:24px;background:#fff;box-shadow:0 2px 0 var(--line);margin:0 auto 10px;display:block}
 {% endblock %}
 {% block conteudo %}
+<div class="qz">
 <a href="{{ url_for('materia', mid=m.id) }}#questoes" class="mut" style="text-decoration:none;font-weight:800">‹ {{ m.nome }}</a>
-<h1>{{ c.titulo }}</h1>
-<p class="sub">{{ gab|length }} questões · meta {{ meta_acerto|pct }} · questões em branco não contam no percentual</p>
+<h1 style="margin-top:4px">{{ c.titulo }}</h1>
+<p class="sub">{{ numeros|length }} questões{% if c.topico %} · {{ c.topico.rotulo }}{% endif %} · meta {{ meta_acerto|pct }}</p>
 
-<div class="lay">
-  <div>
-    <iframe class="pdf" src="{{ url_for('caderno_pdf', cid=c.id, tipo='questoes') }}#view=FitH" title="PDF das questões"></iframe>
-    <p class="hint"><a href="{{ url_for('caderno_pdf', cid=c.id, tipo='questoes') }}" target="_blank" rel="noopener">Abrir as questões em nova aba</a>
-      · <a href="{{ url_for('caderno_gabarito', cid=c.id) }}">Editar gabarito</a></p>
-    {% if c.tentativas %}
-    <div class="card">
-      <h2>Tentativas anteriores</h2>
-      <table><tr><th>Data</th><th>Acertos</th><th>%</th><th></th></tr>
-        {% for t in c.tentativas|reverse %}
-        <tr><td>{{ t.feita_em|dt }}</td><td>{{ t.acertos }}/{{ t.respondidas }}</td>
-          <td><span class="tag {{ 'ok' if t.percentual >= meta_acerto else 'err' }}">{{ t.percentual|pct }}</span></td>
-          <td><a href="{{ url_for('tentativa_ver', tid=t.id) }}">ver</a></td></tr>
-        {% endfor %}
-      </table>
-    </div>
-    {% endif %}
+<section class="qz-card inicio" id="tela-inicio">
+  <img src="{{ url_for('static', filename='avatar/neutro.png') }}" alt="">
+  {% if aberta and aberta.respondidas %}
+  <h2>Você tem uma bateria em andamento</h2>
+  <p class="mut">{{ aberta.respondidas }} de {{ aberta.total }} respondidas · {{ aberta.acertos }} acerto{{ '' if aberta.acertos == 1 else 's' }}</p>
+  <div class="row" style="justify-content:center;gap:10px">
+    <button class="btn" id="btn-continuar">Continuar</button>
+    <button class="btn claro" id="btn-nova">Recomeçar do zero</button>
   </div>
+  {% else %}
+  <h2>Pronto para a bateria?</h2>
+  <p class="mut">Uma questão por vez. Escolha a alternativa e confirme — eu digo na hora se você acertou.</p>
+  <button class="btn ouro" id="btn-comecar">Começar</button>
+  {% endif %}
+  {% if reconstruidas < numeros|length %}
+  <p class="hint" style="margin-top:14px">{{ reconstruidas }} de {{ numeros|length }} questões foram reconstruídas do PDF. As demais aparecem só com as letras A–E.</p>
+  {% endif %}
+</section>
 
-  <form class="card cartao" method="post" id="cartao">
-    <div class="row"><h2 style="margin:0">Cartão-resposta</h2><span class="tag right" id="cont">0/{{ gab|length }}</span></div>
-    <div style="margin:10px 0">
-      {% for n in gab %}
-      <div class="q"><b>{{ n }}</b>
-        {% for l in letras %}<label><input type="radio" name="q{{ n }}" value="{{ l }}"><span>{{ l }}</span></label>{% endfor %}
-      </div>
-      {% endfor %}
+<section id="tela-quiz" hidden>
+  <div class="qz-topo">
+    <img id="av" src="{{ url_for('static', filename='avatar/neutro.png') }}" alt="">
+    <div class="qz-prog">
+      <div class="bar"><i id="barra" style="width:0%"></i></div>
+      <small><span id="prog-txt"></span><span id="acertos-txt"></span></small>
     </div>
-    <button class="btn ouro cheio">Corrigir</button>
+  </div>
+  <div class="qz-card">
+    <div class="qz-n" id="q-n"></div>
+    <div class="qz-fonte" id="q-fonte"></div>
+    <details class="qz-apoio" id="q-apoio" hidden><summary>Texto de apoio</summary><div></div></details>
+    <div class="qz-aviso" id="q-aviso" hidden>Não consegui reconstruir o texto desta questão a partir do PDF. Responda pelas letras ou pule.</div>
+    <p class="qz-enun" id="q-enun"></p>
+    <div class="qz-alts" id="q-alts"></div>
+    <div class="qz-fb" id="q-fb" role="status" aria-live="polite"></div>
+    <div class="qz-acoes">
+      <button class="btn claro mini" id="btn-pular">Pular</button>
+      <button class="btn right" id="btn-responder" disabled>Responder</button>
+      <button class="btn azul right" id="btn-proxima" hidden>Próxima</button>
+    </div>
+  </div>
+  <div class="qz-mapa" id="mapa" aria-label="Questões"></div>
+  <div class="row" style="margin-top:14px">
+    <button class="btn claro mini" id="btn-encerrar">Encerrar bateria e ver resultado</button>
+  </div>
+</section>
+
+{% if finalizadas %}
+<section class="card" style="margin-top:16px">
+  <h2>Baterias anteriores</h2>
+  <table><tr><th>Data</th><th>Acertos</th><th>%</th><th></th></tr>
+    {% for t in finalizadas|reverse %}
+    <tr><td>{{ t.feita_em|dt }}</td><td>{{ t.acertos }}/{{ t.respondidas }}</td>
+      <td><span class="tag {{ 'ok' if t.percentual >= meta_acerto else 'err' }}">{{ t.percentual|pct }}</span></td>
+      <td><a href="{{ url_for('tentativa_ver', tid=t.id) }}">ver</a></td></tr>
+    {% endfor %}
+  </table>
+</section>
+{% endif %}
+
+<details class="box" style="margin-top:16px">
+  <summary>Opções do caderno</summary>
+  <form method="post" action="{{ url_for('caderno_reprocessar', cid=c.id) }}" style="margin:6px 0 10px">
+    <button class="btn claro mini">Reconstruir as questões do PDF de novo</button>
   </form>
+  <a class="btn claro mini" href="{{ url_for('caderno_gabarito', cid=c.id) }}"
+     onclick="return confirm('A página de edição MOSTRA o gabarito. Abrir mesmo assim?')">Corrigir gabarito (mostra as respostas)</a>
+</details>
 </div>
 {% endblock %}
 {% block js %}
 <script>
 (function(){
-  const f=document.getElementById('cartao'),c=document.getElementById('cont'),tot={{ gab|length }};
-  const conta=()=>new Set([...f.querySelectorAll('input:checked')].map(i=>i.name)).size;
-  // clique de novo na mesma letra desmarca
-  f.addEventListener('click',e=>{const s=e.target.closest('label');if(!s)return;const i=s.querySelector('input');
-    if(i.checked&&i.dataset.was==='1'){e.preventDefault();i.checked=false;i.dataset.was='0';c.textContent=conta()+'/'+tot;return}
-    f.querySelectorAll('input[name="'+i.name+'"]').forEach(x=>x.dataset.was='0');setTimeout(()=>{i.dataset.was='1';c.textContent=conta()+'/'+tot},0)});
-  f.addEventListener('submit',e=>{const n=conta();if(!n){e.preventDefault();alert('Marque ao menos uma resposta.');return}
-    if(n<tot&&!confirm((tot-n)+' questão(ões) em branco. Corrigir mesmo assim?'))e.preventDefault()});
+  const CID = {{ c.id }}, NUMS = {{ numeros|tojson }}, AV = "{{ url_for('static', filename='avatar/') }}";
+  const LET = ['A','B','C','D','E'];
+  const $ = id => document.getElementById(id);
+  let tid = null, estado = {status:{}}, idx = 0, q = null, escolha = null;
+  const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  async function api(url, corpo) {
+    const r = await fetch(url, corpo === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(corpo)});
+    const d = await r.json(); if (!d.ok) throw new Error(d.erro || 'erro'); return d;
+  }
+  function avatar(h) { const im = $('av'); im.src = AV + h + '.png'; im.classList.remove('pula'); void im.offsetWidth; im.classList.add('pula'); }
+  function atualizaEstado(d) {
+    estado = d;
+    const tot = NUMS.length, resp = d.respondidas;
+    $('barra').style.width = (100 * resp / tot) + '%';
+    $('prog-txt').textContent = resp + ' de ' + tot + ' respondidas';
+    $('acertos-txt').textContent = d.acertos + ' acerto' + (d.acertos === 1 ? '' : 's') + (resp ? ' (' + Math.round(100 * d.acertos / resp) + '%)' : '');
+    $('mapa').innerHTML = NUMS.map((n, k) => '<button type="button" data-k="' + k + '" class="' + (d.status[n] || '') + (k === idx ? ' atual' : '') +
+      '" aria-label="Questão ' + n + '">' + n + '</button>').join('');
+  }
+  function proximaPendente(de) {
+    for (let k = 1; k <= NUMS.length; k++) { const j = (de + k) % NUMS.length; if (!estado.status[NUMS[j]]) return j; }
+    return -1;
+  }
+  async function abre(k) {
+    idx = k; escolha = null;
+    const d = await api('/api/tentativa/' + tid + '/questao/' + NUMS[k]);
+    q = d.questao; atualizaEstado(d);
+    $('q-n').textContent = 'Questão ' + q.n + ' de ' + NUMS.length;
+    $('q-fonte').textContent = q.fonte;
+    const ap = $('q-apoio'); ap.hidden = !q.apoio; ap.querySelector('div').textContent = q.apoio; ap.open = !!q.apoio && k === 0 || (ap.open && !!q.apoio);
+    $('q-aviso').hidden = q.ok;
+    $('q-enun').textContent = q.enunciado;
+    const letras = Object.keys(q.alternativas).length ? Object.keys(q.alternativas) : LET;
+    const box = $('q-alts');
+    box.className = Object.keys(q.alternativas).length ? 'qz-alts' : 'qz-letras';
+    box.innerHTML = letras.map(l => '<button type="button" class="alt" data-l="' + l + '"><span class="lt">' + l + '</span>' +
+      (q.alternativas[l] ? '<span>' + esc(q.alternativas[l]) + '</span>' : '') + '</button>').join('');
+    const fb = $('q-fb'); fb.className = 'qz-fb'; fb.textContent = '';
+    $('btn-responder').disabled = true; $('btn-responder').hidden = false; $('btn-pular').hidden = false; $('btn-proxima').hidden = true;
+    if (q.sua) mostraCorrecao(q.sua, q.certa, q.correta, false);
+    window.scrollTo({top: 0, behavior: 'smooth'});
+  }
+  function mostraCorrecao(sua, certa, correta, animar) {
+    document.querySelectorAll('#q-alts .alt').forEach(b => {
+      b.disabled = true; b.classList.remove('sel');
+      if (certa === 'X' ? b.dataset.l === sua : b.dataset.l === certa) b.classList.add('certa');
+      if (b.dataset.l === sua && !correta) b.classList.add('errada');
+    });
+    const fb = $('q-fb');
+    fb.className = 'qz-fb ' + (correta ? 'ok' : 'erro');
+    fb.textContent = certa === 'X' ? 'Questão anulada — conta como acerto.' : correta ? 'Acertou! Resposta: ' + certa + '.' : 'Errou. A resposta certa é ' + certa + '.';
+    $('btn-responder').hidden = true; $('btn-pular').hidden = true; $('btn-proxima').hidden = false;
+    $('btn-proxima').textContent = proximaPendente(idx) < 0 ? 'Ver resultado' : 'Próxima';
+    if (animar) avatar(correta ? 'feliz' : 'bravo');
+    $('btn-proxima').focus();
+  }
+  $('q-alts').addEventListener('click', e => {
+    const b = e.target.closest('.alt'); if (!b || b.disabled) return;
+    document.querySelectorAll('#q-alts .alt').forEach(x => x.classList.toggle('sel', x === b));
+    escolha = b.dataset.l; $('btn-responder').disabled = false;
+  });
+  $('btn-responder').addEventListener('click', async () => {
+    if (!escolha) return;
+    $('btn-responder').disabled = true;
+    try {
+      const d = await api('/api/tentativa/' + tid + '/responder', {n: q.n, letra: escolha});
+      atualizaEstado(d); mostraCorrecao(d.sua, d.certa, d.correta, true);
+    } catch (_) { alert('Não foi possível registrar a resposta.'); $('btn-responder').disabled = false; }
+  });
+  $('btn-pular').addEventListener('click', () => { const k = (idx + 1) % NUMS.length; abre(k); });
+  $('btn-proxima').addEventListener('click', () => { const k = proximaPendente(idx); k < 0 ? encerrar(false) : abre(k); });
+  $('mapa').addEventListener('click', e => { const b = e.target.closest('button'); if (b) abre(+b.dataset.k); });
+  async function encerrar(perguntar) {
+    const falta = NUMS.length - (estado.respondidas || 0);
+    if (perguntar && falta && !confirm(falta + ' questão(ões) sem resposta. Encerrar a bateria mesmo assim?')) return;
+    try { const d = await api('/api/tentativa/' + tid + '/finalizar', {}); location.href = d.url; }
+    catch (_) { alert('Não foi possível encerrar.'); }
+  }
+  $('btn-encerrar').addEventListener('click', () => encerrar(true));
+  document.addEventListener('keydown', e => {
+    if ($('tela-quiz').hidden || e.target.tagName === 'INPUT') return;
+    const k = e.key.toUpperCase();
+    if (LET.includes(k)) { const b = document.querySelector('#q-alts .alt[data-l="' + k + '"]'); if (b) b.click(); }
+    if (e.key === 'Enter') { if (!$('btn-responder').hidden && !$('btn-responder').disabled) $('btn-responder').click(); else if (!$('btn-proxima').hidden) $('btn-proxima').click(); }
+  });
+  async function iniciar(nova) {
+    try {
+      const d = await api('/api/caderno/' + CID + '/iniciar', {nova: !!nova});
+      tid = d.tentativa; estado = d;
+      $('tela-inicio').hidden = true; $('tela-quiz').hidden = false;
+      const k = proximaPendente(-1); abre(k < 0 ? 0 : k);
+    } catch (_) { alert('Não foi possível iniciar a bateria.'); }
+  }
+  const b1 = $('btn-comecar'), b2 = $('btn-continuar'), b3 = $('btn-nova');
+  if (b1) b1.addEventListener('click', () => iniciar(false));
+  if (b2) b2.addEventListener('click', () => iniciar(false));
+  if (b3) b3.addEventListener('click', () => { if (confirm('Encerrar a bateria atual e começar outra do zero?')) iniciar(true); });
 })();
 </script>
 {% endblock %}

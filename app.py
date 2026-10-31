@@ -21,6 +21,7 @@ from sqlalchemy.orm import deferred
 from werkzeug.utils import secure_filename
 
 from edital import EDITAL, TODO, chave_legada
+import questoes as QZ
 
 TZ = ZoneInfo("America/Sao_Paulo")
 LETRAS = "ABCDE"
@@ -129,6 +130,8 @@ class Caderno(db.Model):
     topico = db.relationship("Topico")
     gabarito_json = db.Column(db.Text, default="{}")
     criado_em = db.Column(db.DateTime, default=agora)
+    questoes = db.relationship("Questao", backref="caderno", order_by="Questao.numero",
+                               cascade="all, delete-orphan", lazy="select")
     tentativas = db.relationship("Tentativa", backref="caderno", order_by="Tentativa.feita_em",
                                  cascade="all, delete-orphan", lazy="selectin")
 
@@ -159,6 +162,7 @@ class Tentativa(db.Model):
     total = db.Column(db.Integer, default=0)
     xp = db.Column(db.Integer, default=0)
     respostas_json = db.Column(db.Text, default="{}")
+    finalizada = db.Column(db.Boolean, default=True)  # False = bateria em andamento (questão a questão)
     materia = db.relationship("Materia")
 
     @property
@@ -168,6 +172,25 @@ class Tentativa(db.Model):
     @property
     def respostas(self):
         return {int(k): v for k, v in json.loads(self.respostas_json or "{}").items()}
+
+
+class Questao(db.Model):
+    """Questão reconstruída do PDF (sem o gabarito, que fica no Caderno)."""
+    id = db.Column(db.Integer, primary_key=True)
+    caderno_id = db.Column(db.Integer, db.ForeignKey("caderno.id", ondelete="CASCADE"), nullable=False, index=True)
+    numero = db.Column(db.Integer, nullable=False)
+    fonte = db.Column(db.String(300))
+    apoio = db.Column(db.Text)
+    enunciado = db.Column(db.Text)
+    alternativas_json = db.Column(db.Text, default="{}")
+    ok = db.Column(db.Boolean, default=False)
+
+    @property
+    def alternativas(self):
+        try:
+            return json.loads(self.alternativas_json or "{}")
+        except Exception:
+            return {}
 
 
 class Config(db.Model):
@@ -230,7 +253,7 @@ def seed():
     db.session.commit()
 
 
-NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)"), ("aula", "ordem", "INTEGER")]
+NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)"), ("aula", "ordem", "INTEGER"), ("tentativa", "finalizada", "BOOLEAN DEFAULT TRUE")]
 
 
 def migrar(conn):
@@ -1151,23 +1174,44 @@ def aula_excluir(aid):
 
 
 # ---- Questões ------------------------------------------------------------- #
+def montar_questoes(c):
+    """(Re)constrói as questões do caderno a partir do PDF. Retorna quantas ficaram completas."""
+    Questao.query.filter_by(caderno_id=c.id).delete()
+    gab = c.gabarito
+    if not gab or not c.pdf_questoes:
+        db.session.commit()
+        return 0
+    try:
+        paginas = [p.extract_text() or "" for p in PdfReader(io.BytesIO(c.pdf_questoes)).pages]
+    except Exception:
+        paginas = []
+    texto = QZ.cortar_gabarito(QZ.limpar_paginas(paginas), parse_gabarito_texto)
+    res = QZ.extrair_questoes(texto, list(gab))
+    for n, q in res.items():
+        db.session.add(Questao(caderno_id=c.id, numero=n, fonte=(q["fonte"] or "")[:300], apoio=q["apoio"],
+                               enunciado=q["enunciado"], alternativas_json=json.dumps(q["alternativas"], ensure_ascii=False),
+                               ok=q["ok"]))
+    db.session.commit()
+    return sum(1 for q in res.values() if q["ok"])
+
+
 @app.post("/materia/<int:mid>/cadernos")
 def caderno_novo(mid):
     m = db.get_or_404(Materia, mid)
     dq, nome = _ler_upload(request.files.get("pdf_questoes"))
     if not dq:
-        flash("Envie o PDF com as questões.", "erro")
+        flash("Escolha o PDF com as questões.", "erro")
         return redirect(url_for("materia", mid=mid) + "#questoes")
     dg, _ = _ler_upload(request.files.get("pdf_gabarito"))
     texto = request.form.get("gabarito_texto", "")
 
-    gab, origem = {}, ""
+    gab = {}
     if texto.strip():
-        gab, origem = parse_gabarito_texto(texto, manual=True), "texto digitado"
+        gab = parse_gabarito_texto(texto, manual=True)
     if not gab and dg:
-        gab, origem = parse_gabarito_texto(extrair_texto(dg)), "PDF do gabarito"
+        gab = parse_gabarito_texto(extrair_texto(dg))
     if not gab:
-        gab, origem = parse_gabarito_texto(extrair_texto(dq), exigir_secao=True), "PDF das questões"
+        gab = parse_gabarito_texto(extrair_texto(dq), exigir_secao=True)
 
     titulo = request.form.get("titulo", "").strip() or os.path.splitext(nome)[0]
     c = Caderno(materia_id=m.id, titulo=titulo[:200], arquivo_nome=nome[:200], pdf_questoes=dq,
@@ -1176,25 +1220,17 @@ def caderno_novo(mid):
     db.session.add(c)
     definir_topico_caderno(c, request.form.get("topico_id"), request.form.get("novo_assunto"))
     db.session.commit()
-    if gab:
-        flash(f"Caderno criado: {len(gab)} questões lidas do {origem}. Confira o gabarito antes de resolver.", "ok")
-    else:
-        flash("Caderno criado, mas não consegui ler o gabarito automaticamente. Digite-o abaixo.", "erro")
-    return redirect(url_for("caderno_gabarito", cid=c.id))
-
-
-@app.route("/caderno/<int:cid>/pdf/<tipo>")
-def caderno_pdf(cid, tipo):
-    c = db.get_or_404(Caderno, cid)
-    data = c.pdf_questoes if tipo == "questoes" else c.pdf_gabarito if tipo == "gabarito" else None
-    if not data:
-        abort(404)
-    return send_file(io.BytesIO(data), mimetype="application/pdf",
-                     download_name=f"caderno-{cid}-{tipo}.pdf")
+    if not gab:
+        flash("Caderno criado, mas não consegui ler o gabarito. Digite-o abaixo.", "erro")
+        return redirect(url_for("caderno_gabarito", cid=c.id))
+    ok = montar_questoes(c)
+    flash(f"Caderno criado: {ok} de {len(gab)} questões reconstruídas. Bons estudos!", "ok" if ok else "erro")
+    return redirect(url_for("materia", mid=mid) + "#questoes")
 
 
 @app.route("/caderno/<int:cid>/gabarito", methods=["GET", "POST"])
 def caderno_gabarito(cid):
+    """Corrigir o gabarito (mostra as respostas — por isso fica escondido atrás de um aviso)."""
     c = db.get_or_404(Caderno, cid)
     if request.method == "POST":
         gab = parse_gabarito_texto(request.form.get("gabarito", ""), manual=True)
@@ -1207,47 +1243,134 @@ def caderno_gabarito(cid):
         else:
             c.gabarito = gab
             db.session.commit()
-            flash(f"Gabarito salvo: {len(gab)} questões.", "ok")
+            ok = montar_questoes(c)
+            flash(f"Gabarito salvo: {len(gab)} questões ({ok} reconstruídas).", "ok")
             return redirect(url_for("caderno_resolver", cid=cid))
     texto = "\n".join(f"{n}-{l}" for n, l in c.gabarito.items())
     return render_template("gabarito.html", c=c, m=c.materia, texto=texto)
 
 
-@app.route("/caderno/<int:cid>", methods=["GET", "POST"])
+@app.post("/caderno/<int:cid>/reprocessar")
+def caderno_reprocessar(cid):
+    c = db.get_or_404(Caderno, cid)
+    ok = montar_questoes(c)
+    flash(f"{ok} de {c.total} questões reconstruídas do PDF.", "ok" if ok else "erro")
+    return redirect(url_for("caderno_resolver", cid=cid))
+
+
+def _tentativa_aberta(c):
+    return (Tentativa.query.filter_by(caderno_id=c.id, finalizada=False)
+            .order_by(Tentativa.feita_em.desc()).first())
+
+
+@app.route("/caderno/<int:cid>")
 def caderno_resolver(cid):
     c = db.get_or_404(Caderno, cid)
-    gab = c.gabarito
-    if not gab:
+    if not c.gabarito:
         flash("Este caderno ainda não tem gabarito.", "erro")
         return redirect(url_for("caderno_gabarito", cid=cid))
-    if request.method == "POST":
-        resp = {n: request.form.get(f"q{n}") for n in gab}
-        resp = {n: v for n, v in resp.items() if v in LETRAS}
-        if not resp:
-            flash("Marque ao menos uma resposta.", "erro")
-            return redirect(url_for("caderno_resolver", cid=cid))
-        acertos = sum(1 for n, v in resp.items() if gab[n] in ("X", v))
-        pct = 100 * acertos / len(resp)
-        meta = cfg_num(configs(), "meta_acerto")
-        xp = acertos + (25 if pct >= meta and len(resp) >= 5 else 0)
-        t = Tentativa(caderno_id=c.id, materia_id=c.materia_id, feita_em=agora(), acertos=acertos,
-                      respondidas=len(resp), total=len(gab), xp=xp,
-                      respostas_json=json.dumps({str(k): v for k, v in resp.items()}))
+    if not Questao.query.filter_by(caderno_id=c.id).count():
+        montar_questoes(c)
+    qs = Questao.query.filter_by(caderno_id=c.id).order_by(Questao.numero).all()
+    aberta = _tentativa_aberta(c)
+    return render_template("resolver.html", c=c, m=c.materia, numeros=[q.numero for q in qs],
+                           reconstruidas=sum(1 for q in qs if q.ok), aberta=aberta,
+                           finalizadas=[t for t in c.tentativas if t.finalizada is not False])
+
+
+def _questao_json(t, q):
+    resp = t.respostas
+    d = {"n": q.numero, "fonte": q.fonte or "", "apoio": q.apoio or "", "enunciado": q.enunciado or "",
+         "alternativas": q.alternativas, "ok": bool(q.ok)}
+    if q.numero in resp:  # já respondida nesta bateria: pode mostrar a correção
+        certa = t.caderno.gabarito.get(q.numero)
+        d.update(sua=resp[q.numero], certa=certa, correta=certa in ("X", resp[q.numero]))
+    return d
+
+
+def _estado(t):
+    resp, gab = t.respostas, t.caderno.gabarito
+    return {"acertos": t.acertos, "respondidas": t.respondidas, "total": t.total,
+            "status": {str(n): ("ok" if gab.get(n) in ("X", v) else "erro") for n, v in resp.items()}}
+
+
+@app.post("/api/caderno/<int:cid>/iniciar")
+def api_iniciar(cid):
+    c = db.get_or_404(Caderno, cid)
+    t = _tentativa_aberta(c)
+    if t is None or (request.get_json(silent=True) or {}).get("nova"):
+        if t is not None:  # descarta a bateria aberta vazia; se já tinha respostas, encerra
+            if t.respondidas:
+                t.finalizada = True
+            else:
+                db.session.delete(t)
+        t = Tentativa(caderno_id=c.id, materia_id=c.materia_id, feita_em=agora(), acertos=0, respondidas=0,
+                      total=len(c.gabarito), xp=0, respostas_json="{}", finalizada=False)
         db.session.add(t)
         db.session.commit()
-        return redirect(url_for("tentativa_ver", tid=t.id))
-    return render_template("resolver.html", c=c, m=c.materia, gab=gab, letras=LETRAS)
+    return jsonify(ok=True, tentativa=t.id, **_estado(t))
+
+
+@app.get("/api/tentativa/<int:tid>/questao/<int:n>")
+def api_questao(tid, n):
+    t = db.get_or_404(Tentativa, tid)
+    q = Questao.query.filter_by(caderno_id=t.caderno_id, numero=n).first_or_404()
+    return jsonify(ok=True, questao=_questao_json(t, q), **_estado(t))
+
+
+@app.post("/api/tentativa/<int:tid>/responder")
+def api_responder(tid):
+    t = db.get_or_404(Tentativa, tid)
+    if t.finalizada:
+        return jsonify(ok=False, erro="bateria encerrada"), 400
+    d = request.get_json(silent=True) or {}
+    try:
+        n = int(d.get("n"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False), 400
+    letra = str(d.get("letra") or "").upper()
+    gab = t.caderno.gabarito
+    if n not in gab or letra not in LETRAS:
+        return jsonify(ok=False), 400
+    resp = t.respostas
+    if n not in resp:  # resposta é definitiva
+        resp[n] = letra
+        t.respostas_json = json.dumps({str(k): v for k, v in resp.items()})
+        t.respondidas = len(resp)
+        t.acertos = sum(1 for k, v in resp.items() if gab.get(k) in ("X", v))
+        t.xp = t.acertos
+        t.feita_em = agora()
+        db.session.commit()
+    certa = gab[n]
+    return jsonify(ok=True, n=n, sua=resp[n], certa=certa, correta=certa in ("X", resp[n]), **_estado(t))
+
+
+@app.post("/api/tentativa/<int:tid>/finalizar")
+def api_finalizar(tid):
+    t = db.get_or_404(Tentativa, tid)
+    if not t.respondidas:
+        db.session.delete(t)
+        db.session.commit()
+        return jsonify(ok=True, url=url_for("caderno_resolver", cid=t.caderno_id))
+    if not t.finalizada:
+        meta = cfg_num(configs(), "meta_acerto")
+        t.xp = t.acertos + (25 if t.percentual >= meta and t.respondidas >= 5 else 0)
+        t.finalizada = True
+        db.session.commit()
+    return jsonify(ok=True, url=url_for("tentativa_ver", tid=t.id))
 
 
 @app.route("/tentativa/<int:tid>")
 def tentativa_ver(tid):
     t = db.get_or_404(Tentativa, tid)
+    if t.finalizada is False:
+        return redirect(url_for("caderno_resolver", cid=t.caderno_id))
     gab, resp = t.caderno.gabarito, t.respostas
     linhas = [{"n": n, "sua": resp.get(n), "certa": g,
                "ok": (n in resp and g in ("X", resp[n])), "branco": n not in resp}
               for n, g in gab.items()]
     meta = cfg_num(configs(), "meta_acerto")
-    anteriores = [x for x in t.caderno.tentativas if x.id != t.id and x.feita_em <= t.feita_em]
+    anteriores = [x for x in t.caderno.tentativas if x.id != t.id and x.feita_em <= t.feita_em and x.finalizada is not False]
     return render_template("resultado.html", t=t, c=t.caderno, m=t.caderno.materia, linhas=linhas,
                            humor=humor_por_pct(t.percentual, meta),
                            anterior=anteriores[-1] if anteriores else None)

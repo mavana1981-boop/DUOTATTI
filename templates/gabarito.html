@@ -3,8 +3,9 @@
 {% block titulo %}Gabarito{% endblock %}
 {% block conteudo %}
 <a href="{{ url_for('materia', mid=m.id) }}#questoes" class="mut" style="text-decoration:none;font-weight:800">‹ {{ m.nome }}</a>
-<h1>Conferir gabarito</h1>
-<p class="sub">{{ c.titulo }} · {{ c.total }} questões lidas</p>
+<h1>Corrigir gabarito</h1>
+<p class="sub">{{ c.titulo }} · {{ c.total }} questões</p>
+<div class="flash" style="padding:0;margin:0 0 14px"><div class="erro">Atenção: esta página mostra as respostas. Use só para corrigir um gabarito lido errado.</div></div>
 
 <div class="grid g2">
   <form class="card" method="post">
@@ -23,12 +24,8 @@
     </div>
   </form>
   <div class="card">
-    <h2>Arquivos</h2>
-    <p><a href="{{ url_for('caderno_pdf', cid=c.id, tipo='questoes') }}" target="_blank" rel="noopener">PDF das questões</a></p>
-    {% if c.tem_pdf_gabarito %}
-    <p><a href="{{ url_for('caderno_pdf', cid=c.id, tipo='gabarito') }}" target="_blank" rel="noopener">PDF do gabarito</a></p>
-    <iframe class="pdf" style="height:50vh" src="{{ url_for('caderno_pdf', cid=c.id, tipo='gabarito') }}#view=FitH" title="PDF do gabarito"></iframe>
-    {% endif %}
+    <h2>Caderno</h2>
+    <p class="mut" style="margin-top:0">{{ c.questoes|selectattr('ok')|list|length }} de {{ c.total }} questões reconstruídas do PDF.</p>
     <form method="post" action="{{ url_for('caderno_excluir', cid=c.id) }}" style="margin-top:14px"
           onsubmit="return confirm('Excluir o caderno e todas as tentativas dele?')">
       <button class="btn vermelho mini">Excluir caderno</button>

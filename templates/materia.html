@@ -167,7 +167,8 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
     </form>
   </details>
   {% for c in m.cadernos %}
-  {% set ts = c.tentativas %}
+  {% set ts = c.tentativas|selectattr('finalizada')|list %}
+  {% set andamento = c.tentativas|rejectattr('finalizada')|list %}
   <div class="item">
     <div class="num {{ 'lida' if ts }}">{{ c.total }}</div>
     <div style="flex:1;min-width:0">
@@ -182,7 +183,7 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
         <option value="">Item do edital / assunto: não definido</option>{{ opcoes(m, c.topico_id) }}
       </select>
     </div>
-    <a class="btn mini {{ 'claro' if ts else 'ouro' }}" href="{{ url_for('caderno_resolver', cid=c.id) }}">{{ 'Refazer' if ts else 'Resolver' }}</a>
+    <a class="btn mini {{ 'azul' if andamento else ('claro' if ts else 'ouro') }}" href="{{ url_for('caderno_resolver', cid=c.id) }}">{{ 'Continuar' if andamento else ('Refazer' if ts else 'Resolver') }}</a>
   </div>
   {% else %}
   <p class="mut">Nenhum caderno ainda.</p>
