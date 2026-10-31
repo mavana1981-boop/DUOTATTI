@@ -168,7 +168,7 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
   <a class="mat" href="{{ url_for('materia', mid=m.id) }}">
     <div class="anel" style="--c:{{ m.cor }};--p:{{ st.pct_meta }}"><span>{{ st.pct_meta }}%</span></div>
     <div>
-      <h3>{{ m.nome }}</h3>
+      <h3 style="color:{{ m.cor }}">{{ m.nome }}</h3>
       <small>{{ st.aulas }} aula{{ '' if st.aulas == 1 else 's' }} · {{ st.leituras_meta }}/{{ st.leituras_total_meta }} leituras ({{ st.alvo }}x cada)</small>
       {% if st.acerto is not none %}
         <span class="tag {{ 'ok' if st.acerto >= meta_acerto else 'err' }}">{{ st.acerto|pct }} de acerto</span>
