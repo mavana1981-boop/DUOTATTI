@@ -27,6 +27,24 @@
     <div style="margin-top:14px"><button class="btn">Salvar metas</button></div>
   </form>
   <div class="card">
+    <h2>Notificações da Tatti</h2>
+    <div id="push-box">
+      <p class="mut" style="margin-top:0" id="push-status">Verificando este aparelho…</p>
+      <div id="push-on" hidden>
+        <label class="f" for="push-hora">Horário do lembrete diário</label>
+        <div class="row" style="gap:8px"><input type="time" id="push-hora" value="19:00" style="max-width:140px">
+          <button type="button" class="btn claro mini" id="push-salvar">Salvar horário</button></div>
+        <p class="hint">Se a meta do dia (leituras + bateria) já estiver cumprida no horário, a Tatti não incomoda.</p>
+        <div class="row" style="gap:8px;margin:8px 0 16px">
+          <button type="button" class="btn azul mini" id="push-teste">Enviar teste agora</button>
+          <button type="button" class="btn claro mini" id="push-desativar">Desativar neste aparelho</button>
+        </div>
+      </div>
+      <div id="push-off" hidden style="margin-bottom:16px">
+        <button type="button" class="btn mini" id="push-ativar">Ativar notificações neste celular</button>
+        <p class="hint">Dica: no Chrome do Android, toque em ⋮ › <b>Adicionar à tela inicial</b>. Assim o ícone da Tatti ganha a bolinha quando houver lembrete.</p>
+      </div>
+    </div>
     <h2>Leitura das questões com IA</h2>
     {% if ia.on %}
     <p style="margin-top:0">Ativada (modelo <b>{{ ia.modelo }}</b>). {{ ia.ok }} de {{ ia.total }} caderno(s) lidos com IA{% if ia.lendo %} · {{ ia.lendo }} em leitura agora{% endif %}{% if ia.erro %} · <span style="color:var(--err)">{{ ia.erro }} com erro</span>{% endif %}.</p>
@@ -65,4 +83,50 @@
     <p style="margin-top:14px">Agora: <b>{{ h.titulo }}</b></p>
   </div>
 </div>
+{% endblock %}
+{% block js %}
+<script>
+(function(){
+  const $ = id => document.getElementById(id), st = $('push-status');
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    st.textContent = 'Este navegador não aceita notificações. No Android, use o Chrome.'; return;
+  }
+  const b64 = s => { const p = '='.repeat((4 - s.length % 4) % 4); const r = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from([...r].map(c => c.charCodeAt(0))); };
+  const post = (u, d) => fetch(u, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(d)}).then(r => r.json());
+  let reg = null, sub = null;
+  function mostra() {
+    $('push-on').hidden = !sub; $('push-off').hidden = !!sub;
+    if (Notification.permission === 'denied') { st.innerHTML = 'As notificações estão <b>bloqueadas</b> para este site. No Chrome: ⋮ › Configurações › Configurações do site › Notificações › permitir o DUOTATTI.'; $('push-off').hidden = true; return; }
+    st.innerHTML = sub ? '<b style="color:var(--ok)">Ativadas neste aparelho.</b> Todo dia, no horário abaixo, a Tatti avisa o que falta — com a carinha do humor do momento.' :
+                         'Receba um lembrete diário com a Tatti no humor do momento (brava, furiosa, feliz…).';
+  }
+  navigator.serviceWorker.register('/sw.js', {scope: '/'}).then(async r => { reg = await navigator.serviceWorker.ready; sub = await reg.pushManager.getSubscription();
+      if (sub) { const e = await post('/api/push/estado', {endpoint: sub.endpoint});
+        if (e.inscrito) $('push-hora').value = e.horario; else await post('/api/push/inscrever', {inscricao: sub.toJSON(), horario: $('push-hora').value}); }
+      mostra(); })
+    .catch(() => { st.textContent = 'Não foi possível preparar as notificações neste aparelho.'; });
+  $('push-ativar').addEventListener('click', async () => {
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { mostra(); return; }
+      const {chave} = await (await fetch('/api/push/chave')).json();
+      sub = await reg.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: b64(chave)});
+      const d = await post('/api/push/inscrever', {inscricao: sub.toJSON(), horario: $('push-hora').value});
+      if (d.horario) $('push-hora').value = d.horario;
+      mostra(); alert('Pronto! A Tatti vai lembrar você todo dia às ' + $('push-hora').value + '.');
+    } catch (e) { alert('Não foi possível ativar: ' + e.message); }
+  });
+  $('push-salvar').addEventListener('click', async () => {
+    const d = await post('/api/push/horario', {endpoint: sub.endpoint, horario: $('push-hora').value});
+    alert(d.ok ? 'Horário salvo: ' + d.horario : 'Horário inválido.');
+  });
+  $('push-teste').addEventListener('click', async () => {
+    const d = await post('/api/push/teste', {endpoint: sub.endpoint});
+    if (!d.ok) alert('O envio falhou. Desative e ative de novo neste aparelho.');
+  });
+  $('push-desativar').addEventListener('click', async () => {
+    await post('/api/push/sair', {endpoint: sub.endpoint}); await sub.unsubscribe(); sub = null; mostra();
+  });
+})();
+</script>
 {% endblock %}

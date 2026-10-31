@@ -146,6 +146,13 @@ th{color:var(--mut);font-weight:800;font-size:.8rem;text-transform:uppercase}
   {% endif %}
 </nav>
 {% endif %}
+{% if usuario %}
+<script>
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', {scope: '/'}).catch(() => {});
+// número de pendências do dia no ícone do app (quando o aparelho suporta)
+if ('setAppBadge' in navigator) fetch('/api/pendentes').then(r => r.json()).then(d => d.pendentes ? navigator.setAppBadge(d.pendentes) : navigator.clearAppBadge()).catch(() => {});
+</script>
+{% endif %}
 {% block js %}{% endblock %}
 </body>
 </html>

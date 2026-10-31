@@ -222,6 +222,19 @@ class LogAcesso(db.Model):
     aparelho = db.Column(db.String(300))
 
 
+class PushInscricao(db.Model):
+    """Celular/navegador inscrito para receber notificações da Tatti."""
+    id = db.Column(db.Integer, primary_key=True)
+    usuario_id = db.Column(db.Integer, db.ForeignKey("usuario.id", ondelete="CASCADE"))
+    endpoint = db.Column(db.Text, nullable=False, unique=True)
+    p256dh = db.Column(db.String(200), nullable=False)
+    auth = db.Column(db.String(100), nullable=False)
+    horario = db.Column(db.String(5), default="19:00")   # HH:MM (horário de Brasília)
+    ultimo_envio = db.Column(db.Date)
+    aparelho = db.Column(db.String(300))
+    criado_em = db.Column(db.DateTime, default=agora)
+
+
 USUARIOS_INICIAIS = [("admin", "Administrador", "admin", True), ("renata", "Renata", "tatti", False)]
 
 
@@ -1058,6 +1071,187 @@ def humor_atual():
     return g.humor_atual
 
 
+# ---- Notificações (Web Push) --------------------------------------------- #
+import push as PUSH  # noqa: E402
+
+FRASES_PUSH = {
+    "furioso": "Tatti está FURIOSA 😡",
+    "bravo": "Tatti está brava 😠",
+    "neutro": "Tatti está de olho 👀",
+    "feliz": "Tatti está feliz 🙂",
+    "radiante": "Tatti está radiante 🤩",
+}
+
+
+def mensagem_do_dia():
+    """Título, texto e humor da notificação. Retorna None se a meta do dia já foi cumprida."""
+    hm = calcular_humor()
+    p, b = hm["dia"]["plano"], hm["dia"]["bateria"]
+    faltam_leit = max(0, p["meta_hoje"] - p["feitas_hoje"]) if p["fase"] == "leitura" else 0
+    faltam_q = max(0, b["meta"] - b["feitas"])
+    partes = []
+    if faltam_leit:
+        partes.append(f"{faltam_leit} leitura{'s' if faltam_leit > 1 else ''} de aula")
+    if faltam_q:
+        partes.append(f"{'a bateria de ' + str(b['meta']) if faltam_q == b['meta'] else str(faltam_q)} questões")
+    if not partes:
+        return None
+    corpo = "Faltam " + " e ".join(partes) + " hoje."
+    if p["atrasadas"]:
+        corpo += f" {len(p['atrasadas'])} aula(s) parada(s) há mais de {p['max_dias']} dias!"
+    return {"titulo": FRASES_PUSH.get(hm["humor"], "Tatti"), "corpo": corpo, "humor": hm["humor"],
+            "pendentes": faltam_leit + (1 if faltam_q else 0)}
+
+
+def enviar_push(insc, msg):
+    dados = {"titulo": msg["titulo"], "corpo": msg["corpo"], "url": "/",
+             "icone": url_for("static", filename=f"icones/{msg['humor']}-192.png"),
+             "imagem": url_for("static", filename=f"avatar/{msg['humor']}.png"),
+             "badge": url_for("static", filename="icones/badge-96.png"),
+             "pendentes": msg.get("pendentes", 1), "tag": "tatti-dia"}
+    try:
+        PUSH.enviar(insc, dados, chaves_vapid())
+        return True
+    except PUSH.InscricaoInvalida:
+        db.session.delete(insc)
+        db.session.commit()
+        return False
+
+
+def chaves_vapid():
+    priv, pub = db.session.get(Config, "vapid_privada"), db.session.get(Config, "vapid_publica")
+    if not priv or not pub:
+        pem, chave_pub = PUSH.gerar_chaves()
+        db.session.merge(Config(chave="vapid_privada", valor=pem))
+        db.session.merge(Config(chave="vapid_publica", valor=chave_pub))
+        db.session.commit()
+        priv, pub = db.session.get(Config, "vapid_privada"), db.session.get(Config, "vapid_publica")
+    return {"privada": priv.valor, "publica": pub.valor}
+
+
+def verificar_lembretes():
+    """Roda a cada minuto: envia o lembrete do dia a quem chegou no horário (uma vez por dia)."""
+    agora_ = agora()
+    hhmm, d = agora_.strftime("%H:%M"), agora_.date()
+    pend = [i for i in PushInscricao.query.all() if (i.horario or "19:00") <= hhmm and i.ultimo_envio != d]
+    if not pend:
+        return
+    msg = mensagem_do_dia()
+    for i in pend:
+        # marca como enviado de forma atômica (evita duplicar com dois workers)
+        n = (PushInscricao.query.filter(PushInscricao.id == i.id,
+                                        (PushInscricao.ultimo_envio.is_(None)) | (PushInscricao.ultimo_envio != d))
+             .update({"ultimo_envio": d}, synchronize_session=False))
+        db.session.commit()
+        if n and msg:
+            enviar_push(i, msg)
+
+
+_lembretes = {"t": None}
+
+
+def _loop_lembretes():
+    import time as _t
+    while True:
+        try:
+            with app.app_context(), app.test_request_context("/"):
+                verificar_lembretes()
+        except Exception as e:  # noqa: BLE001
+            app.logger.warning("lembretes: %s", e)
+        _t.sleep(60)
+
+
+def iniciar_thread_lembretes():
+    """Chamado pelo gunicorn em cada worker (gunicorn.conf.py) e, por garantia, na 1ª requisição."""
+    if _lembretes["t"] is None or not _lembretes["t"].is_alive():
+        _lembretes["t"] = threading.Thread(target=_loop_lembretes, daemon=True)
+        _lembretes["t"].start()
+
+
+@app.before_request
+def iniciar_lembretes():
+    iniciar_thread_lembretes()
+
+
+@app.route("/sw.js")
+def service_worker():
+    resp = send_file(os.path.join(BASE_DIR, "static", "sw.js"), mimetype="application/javascript")
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["Service-Worker-Allowed"] = "/"
+    return resp
+
+
+@app.get("/api/push/chave")
+def api_push_chave():
+    return jsonify(ok=True, chave=chaves_vapid()["publica"])
+
+
+@app.post("/api/push/inscrever")
+def api_push_inscrever():
+    d = request.get_json(silent=True) or {}
+    sub = d.get("inscricao") or {}
+    chaves = sub.get("keys") or {}
+    if not sub.get("endpoint") or not chaves.get("p256dh") or not chaves.get("auth"):
+        return jsonify(ok=False, erro="inscrição inválida"), 400
+    horario = d.get("horario") or "19:00"
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", horario):
+        horario = "19:00"
+    i = PushInscricao.query.filter_by(endpoint=sub["endpoint"]).first() or PushInscricao(endpoint=sub["endpoint"])
+    i.p256dh, i.auth, i.horario = chaves["p256dh"], chaves["auth"], horario
+    i.usuario_id = usuario_atual().id if usuario_atual() else None
+    i.aparelho = (request.headers.get("User-Agent") or "")[:300]
+    if i.ultimo_envio is None and horario <= agora().strftime("%H:%M"):
+        i.ultimo_envio = hoje()  # ativou depois do horário: começa amanhã
+    db.session.add(i)
+    db.session.commit()
+    return jsonify(ok=True, horario=i.horario)
+
+
+@app.post("/api/push/horario")
+def api_push_horario():
+    d = request.get_json(silent=True) or {}
+    i = PushInscricao.query.filter_by(endpoint=d.get("endpoint") or "").first_or_404()
+    h = d.get("horario") or ""
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", h):
+        return jsonify(ok=False), 400
+    i.horario = h
+    if h > agora().strftime("%H:%M") and i.ultimo_envio == hoje():
+        i.ultimo_envio = None  # novo horário ainda não passou hoje
+    db.session.commit()
+    return jsonify(ok=True, horario=h)
+
+
+@app.post("/api/push/estado")
+def api_push_estado():
+    d = request.get_json(silent=True) or {}
+    i = PushInscricao.query.filter_by(endpoint=d.get("endpoint") or "").first()
+    return jsonify(ok=True, inscrito=bool(i), horario=i.horario if i else None)
+
+
+@app.post("/api/push/teste")
+def api_push_teste():
+    d = request.get_json(silent=True) or {}
+    i = PushInscricao.query.filter_by(endpoint=d.get("endpoint") or "").first_or_404()
+    msg = mensagem_do_dia() or {"titulo": FRASES_PUSH["radiante"], "corpo": "Metas de hoje cumpridas. Orgulho de você!",
+                                "humor": "radiante", "pendentes": 0}
+    ok = enviar_push(i, msg)
+    return jsonify(ok=ok)
+
+
+@app.post("/api/push/sair")
+def api_push_sair():
+    d = request.get_json(silent=True) or {}
+    PushInscricao.query.filter_by(endpoint=d.get("endpoint") or "").delete()
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@app.get("/api/pendentes")
+def api_pendentes():
+    msg = mensagem_do_dia()
+    return jsonify(ok=True, pendentes=msg["pendentes"] if msg else 0, humor=humor_atual())
+
+
 @app.route("/manifest.webmanifest")
 def manifest():
     h = humor_atual()
@@ -1074,7 +1268,7 @@ def manifest():
 
 
 app.permanent_session_lifetime = timedelta(days=30)
-LIVRES = ("login", "static", "manifest")
+LIVRES = ("login", "static", "manifest", "service_worker")
 
 
 def usuario_atual():
@@ -1837,4 +2031,5 @@ def muito_grande(_):
 
 
 if __name__ == "__main__":
+    iniciar_thread_lembretes()
     app.run(debug=True, port=int(os.environ.get("PORT", 5000)))
