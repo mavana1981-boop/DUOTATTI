@@ -1,0 +1,22 @@
+<script>
+// conta o tempo com a aula aberta e visível na tela (manda um aviso a cada 20 s)
+(function(){
+  let sid = null, ultimo = Date.now(), visivel = document.visibilityState === 'visible';
+  const enviar = (beacon) => {
+    if (!sid) return;
+    const agora = Date.now(), seg = visivel ? Math.round((agora - ultimo) / 1000) : 0;
+    ultimo = agora;
+    if (seg <= 0) return;
+    const url = '/api/sessao/' + sid + '/ping', corpo = JSON.stringify({seg: Math.min(seg, 90)});
+    if (beacon && navigator.sendBeacon) navigator.sendBeacon(url, new Blob([corpo], {type: 'application/json'}));
+    else fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: corpo, keepalive: true}).catch(() => {});
+  };
+  fetch('/api/aula/{{ a.id }}/sessao', {method: 'POST'}).then(r => r.json()).then(d => { sid = d.sessao; ultimo = Date.now(); }).catch(() => {});
+  setInterval(() => enviar(false), 20000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { enviar(true); visivel = false; }
+    else { visivel = true; ultimo = Date.now(); }
+  });
+  window.addEventListener('pagehide', () => enviar(true));
+})();
+</script>

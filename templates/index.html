@@ -39,6 +39,7 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
 .fila li.urg .pt{box-shadow:0 0 0 3px color-mix(in srgb,var(--err) 45%,transparent)}
 .fl-txt{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
 .fl-txt a{color:var(--ink);text-decoration:none}
+.fl-txt .pags{color:var(--ink)}
 .fl-txt small:first-child{font-weight:800;color:var(--c);font-size:.75rem;text-transform:uppercase;letter-spacing:.03em}
 {% endblock %}
 {% block conteudo %}
@@ -77,6 +78,7 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
 <section class="card hojecard">
   <div class="row"><h2 style="margin:0">Meta de hoje</h2>
     <span class="tag right">{{ hoje_str }}</span></div>
+  <a href="{{ url_for('metas_dias') }}" class="mut" style="font-size:.85rem;font-weight:800">Ver metas de dias anteriores ›</a>
 
   {% if p.fase == 'questoes' %}
   <p style="font-weight:800;margin:10px 0">Fase final: questões e descanso.</p>
@@ -103,7 +105,8 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
   {% endif %}
 
   {% if p.fila %}
-  <h3 class="fila-t">Próximas leituras</h3>
+  {% set pags = p.fila|map(attribute='aula')|map(attribute='paginas')|select|sum %}
+  <h3 class="fila-t">Próximas leituras <small class="mut" style="font-weight:800">· {{ p.fila|length }} aula{{ '' if p.fila|length == 1 else 's' }}{% if pags %} · {{ pags }} páginas no total{% endif %}</small></h3>
   <ol class="fila">
     {% for f in p.fila %}{% set a = f.aula %}
     <li class="{{ 'urg' if f.urgente }}" style="--c:{{ a.materia.cor }}">
@@ -111,7 +114,7 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
       <div class="fl-txt">
         <small>{{ a.materia.nome }}</small>
         <a href="{{ url_for('aula_ver', aid=a.id) }}"><b>{{ a.titulo }}</b></a>
-        <small class="mut">{{ f.vez }}ª leitura · {{ f.motivo }}</small>
+        <small class="mut"><b class="pags">{{ a.paginas ~ ' pág.' if a.paginas else 'páginas: ?' }}</b> · {{ f.vez }}ª leitura · {{ f.motivo }}</small>
       </div>
       <a class="btn mini {{ 'vermelho' if f.urgente else 'azul' }}" href="{{ url_for('aula_ver', aid=a.id) }}">Ler</a>
     </li>

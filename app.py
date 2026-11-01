@@ -119,6 +119,7 @@ class Leitura(db.Model):
     aula_id = db.Column(db.Integer, db.ForeignKey("aula.id"), nullable=False)
     numero = db.Column(db.Integer, nullable=False)  # 1ª, 2ª, 3ª leitura...
     lida_em = db.Column(db.DateTime, default=agora, nullable=False)
+    usuario = db.Column(db.String(60))
 
 
 class Caderno(db.Model):
@@ -212,11 +213,42 @@ class Usuario(db.Model):
         return check_password_hash(self.senha_hash, senha or "")
 
 
+class MetaDia(db.Model):
+    """Foto do plano de cada dia (o que foi planejado), para histórico e remarcação."""
+    data = db.Column(db.Date, primary_key=True)
+    meta_leituras = db.Column(db.Integer, default=0)
+    planejadas_json = db.Column(db.Text, default="[]")   # ids das aulas planejadas
+    meta_questoes = db.Column(db.Integer, default=60)
+    item_bateria = db.Column(db.String(300))
+    restante_inicio = db.Column(db.Integer)
+    criado_em = db.Column(db.DateTime, default=agora)
+
+    @property
+    def planejadas(self):
+        try:
+            return [int(x) for x in json.loads(self.planejadas_json or "[]")]
+        except Exception:
+            return []
+
+
+class SessaoPdf(db.Model):
+    """Tempo com uma aula aberta (só conta enquanto a tela está visível)."""
+    id = db.Column(db.Integer, primary_key=True)
+    usuario = db.Column(db.String(60), index=True)
+    aula_id = db.Column(db.Integer, index=True)
+    titulo = db.Column(db.String(200))
+    materia = db.Column(db.String(120))
+    inicio = db.Column(db.DateTime, default=agora, index=True)
+    fim = db.Column(db.DateTime, default=agora)
+    segundos = db.Column(db.Integer, default=0)
+
+
 class LogAcesso(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     quando = db.Column(db.DateTime, default=agora, nullable=False, index=True)
     usuario = db.Column(db.String(60), index=True)
-    evento = db.Column(db.String(20), nullable=False)  # login | falha | logout | pagina
+    evento = db.Column(db.String(20), nullable=False)  # login | falha | logout | pagina | acao
+    detalhe = db.Column(db.String(300))
     caminho = db.Column(db.String(300))
     ip = db.Column(db.String(64))
     aparelho = db.Column(db.String(300))
@@ -298,7 +330,7 @@ def seed():
     db.session.commit()
 
 
-NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)"), ("aula", "ordem", "INTEGER"), ("tentativa", "finalizada", "BOOLEAN DEFAULT TRUE"), ("caderno", "ia_status", "VARCHAR(20)"), ("caderno", "ia_msg", "VARCHAR(300)"), ("caderno", "ia_inicio", "TIMESTAMP")]
+NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)"), ("aula", "ordem", "INTEGER"), ("tentativa", "finalizada", "BOOLEAN DEFAULT TRUE"), ("caderno", "ia_status", "VARCHAR(20)"), ("caderno", "ia_msg", "VARCHAR(300)"), ("caderno", "ia_inicio", "TIMESTAMP"), ("log_acesso", "detalhe", "VARCHAR(300)"), ("leitura", "usuario", "VARCHAR(60)")]
 
 
 def migrar(conn):
@@ -452,6 +484,17 @@ def criar_usuarios():
     db.session.commit()
 
 
+def contar_paginas_faltantes():
+    """Aulas sem número de páginas (ex.: contagem falhou no envio) são contadas de novo."""
+    for a in Aula.query.filter(Aula.paginas.is_(None)).all():
+        try:
+            if a.pdf:
+                a.paginas = contar_paginas(a.pdf)
+        except Exception:  # noqa: BLE001
+            pass
+    db.session.commit()
+
+
 def _preparar_banco():
     if db.engine.dialect.name == "postgresql":
         with db.engine.begin() as conn:
@@ -468,6 +511,7 @@ def _preparar_banco():
     assuntos_para_topicos()
     numerar_aulas()
     ajustar_bateria_minima()
+    contar_paginas_faltantes()
 
 
 def init_db():
@@ -720,6 +764,18 @@ def plano_do_dia():
         if u and (a.materia_id not in ultima_mat or u > ultima_mat[a.materia_id]):
             ultima_mat[a.materia_id] = u
 
+    # aulas planejadas em dias anteriores e não lidas desde então -> remarcadas (prioridade)
+    por_id = {a.id: a for a in aulas}
+    pendentes = {}
+    for snap in MetaDia.query.filter(MetaDia.data < h, MetaDia.data >= h - timedelta(days=30)).order_by(MetaDia.data).all():
+        for aid in snap.planejadas:
+            a = por_id.get(aid)
+            if not a or aid in pendentes or est[aid]["n"] >= alvo:
+                continue
+            u = est[aid]["ultima"]
+            if u is None or u.date() < snap.data:
+                pendentes[aid] = snap.data
+
     fila = []
     if fase == "leitura":
         cands = [a for a in aulas if est[a.id]["n"] < alvo and est[a.id]["hoje"] == 0]
@@ -728,9 +784,14 @@ def plano_do_dia():
         planejadas = set()
         while cands:
             urgentes = [a for a in cands if est[a.id]["n"] > 0 and dias_sem(a) >= max_dias - 2]
+            atrasadas_plano = [a for a in cands if a.id in pendentes]
             if len(fila) >= vagas and not urgentes:
                 break  # meta cumprida; aulas perto do limite de dias entram mesmo assim
-            if urgentes:
+            if atrasadas_plano and len(fila) < vagas:
+                a = min(atrasadas_plano, key=lambda x: (pendentes[x.id], x.materia.ordem, x.ordem or 0))
+                motivo = f"planejada para {pendentes[a.id].strftime('%d/%m')} e não lida — remarcada"
+                urg = True
+            elif urgentes:
                 a = max(urgentes, key=lambda x: (dias_sem(x), -est[x.id]["n"]))
                 d = dias_sem(a)
                 motivo = f"sem leitura há {d} dias" + (" — passou do limite!" if d > max_dias else "")
@@ -754,8 +815,19 @@ def plano_do_dia():
             ultima_mat[a.materia_id] = marca  # próxima sugestão vai para outra matéria
             planejadas.add(a.materia_id)
 
+    # foto do plano do dia (uma vez por dia)
+    if fase == "leitura" and aulas and not db.session.get(MetaDia, h):
+        try:
+            lidas_hoje = [a.id for a in aulas if est[a.id]["hoje"]]
+            db.session.add(MetaDia(data=h, meta_leituras=meta_hoje, restante_inicio=restante_inicio,
+                                   planejadas_json=json.dumps(lidas_hoje + [f["aula"].id for f in fila]),
+                                   meta_questoes=max(QUESTOES_MINIMO, int(cfg_num(cfg, "meta_questoes_dia")))))
+            db.session.commit()
+        except Exception:  # outro processo gravou ao mesmo tempo
+            db.session.rollback()
+
     total_necessario = alvo * len(aulas)
-    return {"alvo": alvo, "limite": limite, "dias": max(dias, 0), "fase": fase, "max_dias": max_dias,
+    return {"alvo": alvo, "pendentes": pendentes, "limite": limite, "dias": max(dias, 0), "fase": fase, "max_dias": max_dias,
             "restante": restante, "meta_hoje": meta_hoje,
             "aulas_faltando": sum(1 for e in est.values() if e["n"] < alvo),
             "ritmo": (restante_inicio / dias) if fase == "leitura" and dias > 0 else 0,
@@ -789,6 +861,8 @@ def projecao_leituras():
         ult[a.id] = h
         seq += 1
         ult_mat[a.materia_id] = (h, seq)
+    fila_ids = {f["aula"].id for f in p["fila"]}
+    remarcar = [aid for aid, _ in sorted(p["pendentes"].items(), key=lambda kv: kv[1]) if aid not in fila_ids and aid in n]
     d = h + timedelta(days=1)
     while d <= limite:
         restante = sum(max(0, alvo - n[i]) for i in n)
@@ -799,9 +873,14 @@ def projecao_leituras():
         escolhidas = []
         while cands:
             urg = [i for i in cands if n[i] > 0 and ult[i] and (d - ult[i]).days >= max_dias - 2]
+            rem = [i for i in remarcar if i in cands]
             if len(escolhidas) >= meta and not urg:
                 break
-            if urg:
+            if rem and len(escolhidas) < meta:
+                i = rem[0]
+                remarcar.remove(i)
+                u = True
+            elif urg:
                 i = max(urg, key=lambda x: ((d - ult[x]).days, -n[x]))
                 u = True
             else:
@@ -1282,14 +1361,25 @@ def _ip():
     return (request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "")[:64]
 
 
-def registrar(evento, usuario=None, caminho=None):
+def registrar(evento, usuario=None, caminho=None, detalhe=None):
     try:
-        db.session.add(LogAcesso(quando=agora(), usuario=(usuario or "")[:60], evento=evento,
+        db.session.add(LogAcesso(quando=agora(), usuario=(usuario or "")[:60], evento=evento, detalhe=(detalhe or "")[:300] or None,
                                  caminho=(caminho or request.full_path.rstrip("?"))[:300], ip=_ip(),
                                  aparelho=(request.headers.get("User-Agent") or "")[:300]))
         db.session.commit()
     except Exception:  # log nunca derruba a página
         db.session.rollback()
+
+
+def _login_atual():
+    u = usuario_atual()
+    return u.login if u else None
+
+
+def acao(texto):
+    """Registra uma ação de estudo do usuário no log."""
+    u = usuario_atual()
+    registrar("acao", u.login if u else "", request.path, texto)
 
 
 @app.before_request
@@ -1349,18 +1439,75 @@ def logout():
     return redirect(url_for("login"))
 
 
+def _fmt_tempo(seg):
+    seg = int(seg or 0)
+    h, r = divmod(seg, 3600)
+    m = r // 60
+    return f"{h}h{m:02d}" if h else (f"{m} min" if m else f"{seg} s")
+
+
+app.jinja_env.filters["tempo"] = _fmt_tempo
+
+
 @app.route("/logs")
 @so_admin
 def logs():
+    aba = request.args.get("aba", "acessos")
     f_usuario = request.args.get("usuario", "")
     f_evento = request.args.get("evento", "")
+    usuarios = Usuario.query.order_by(Usuario.login).all()
+    if aba == "estudo":
+        try:
+            de = date.fromisoformat(request.args.get("de", ""))
+        except ValueError:
+            de = hoje() - timedelta(days=6)
+        try:
+            ate = date.fromisoformat(request.args.get("ate", ""))
+        except ValueError:
+            ate = hoje()
+        ini, fim = dt0(de), dt0(ate + timedelta(days=1))
+        qs = SessaoPdf.query.filter(SessaoPdf.inicio >= ini, SessaoPdf.inicio < fim)
+        ql = Leitura.query.filter(Leitura.lida_em >= ini, Leitura.lida_em < fim)
+        qa = LogAcesso.query.filter(LogAcesso.evento == "acao", LogAcesso.quando >= ini, LogAcesso.quando < fim)
+        if f_usuario:
+            qs, ql, qa = qs.filter_by(usuario=f_usuario), ql.filter_by(usuario=f_usuario), qa.filter_by(usuario=f_usuario)
+        sessoes = qs.all()
+        leituras = ql.all()
+        por_pdf = {}
+        for sp in sessoes:
+            k = sp.aula_id
+            d = por_pdf.setdefault(k, {"titulo": sp.titulo, "materia": sp.materia, "segundos": 0, "sessoes": 0,
+                                       "ultima": sp.fim, "leituras": 0, "usuarios": set()})
+            d["segundos"] += sp.segundos or 0
+            d["sessoes"] += 1
+            d["usuarios"].add(sp.usuario)
+            d["ultima"] = max(d["ultima"], sp.fim or sp.inicio)
+        for l in leituras:
+            a = l.aula
+            d = por_pdf.setdefault(l.aula_id, {"titulo": a.titulo if a else "?", "materia": a.materia.nome if a else "",
+                                               "segundos": 0, "sessoes": 0, "ultima": l.lida_em, "leituras": 0, "usuarios": set()})
+            d["leituras"] += 1
+            if l.usuario:
+                d["usuarios"].add(l.usuario)
+            d["ultima"] = max(d["ultima"], l.lida_em)
+        pdfs = sorted(por_pdf.values(), key=lambda d: d["ultima"], reverse=True)
+        por_dia = {}
+        for sp in sessoes:
+            por_dia.setdefault(sp.inicio.date(), {"segundos": 0, "leituras": 0})["segundos"] += sp.segundos or 0
+        for l in leituras:
+            por_dia.setdefault(l.lida_em.date(), {"segundos": 0, "leituras": 0})["leituras"] += 1
+        dias = [(d, por_dia.get(d, {"segundos": 0, "leituras": 0})) for d in
+                (ate - timedelta(days=k) for k in range((ate - de).days + 1))]
+        acoes = qa.order_by(LogAcesso.quando.desc()).limit(300).all()
+        return render_template("logs.html", aba=aba, usuarios=usuarios, f_usuario=f_usuario, de=de, ate=ate,
+                               pdfs=pdfs, dias=dias, acoes=acoes,
+                               total_seg=sum(sp.segundos or 0 for sp in sessoes), total_leit=len(leituras))
     q = LogAcesso.query
     if f_usuario:
         q = q.filter_by(usuario=f_usuario)
     if f_evento:
         q = q.filter_by(evento=f_evento)
     registros = q.order_by(LogAcesso.quando.desc(), LogAcesso.id.desc()).limit(500).all()
-    usuarios = Usuario.query.order_by(Usuario.login).all()
     resumo = []
     for u in usuarios:
         ult = (LogAcesso.query.filter_by(usuario=u.login, evento="login").order_by(LogAcesso.quando.desc()).first())
@@ -1368,7 +1515,7 @@ def logs():
         resumo.append({"u": u, "ultimo_login": ult.quando if ult else None, "ultima_atividade": ult_atv.quando if ult_atv else None,
                        "logins": LogAcesso.query.filter_by(usuario=u.login, evento="login").count()})
     falhas = LogAcesso.query.filter_by(evento="falha").count()
-    return render_template("logs.html", registros=registros, usuarios=usuarios, resumo=resumo, falhas=falhas,
+    return render_template("logs.html", aba="acessos", registros=registros, usuarios=usuarios, resumo=resumo, falhas=falhas,
                            f_usuario=f_usuario, f_evento=f_evento)
 
 
@@ -1441,6 +1588,40 @@ def aula_ver(aid):
     return render_template("aula.html", a=a, m=a.materia)
 
 
+@app.route("/aula/<int:aid>/ler-pdf")
+def aula_tela_cheia(aid):
+    a = db.get_or_404(Aula, aid)
+    return render_template("aula_cheia.html", a=a, m=a.materia)
+
+
+@app.post("/api/aula/<int:aid>/sessao")
+def api_sessao_inicio(aid):
+    a = db.get_or_404(Aula, aid)
+    u = usuario_atual()
+    sp = SessaoPdf(usuario=u.login if u else "", aula_id=a.id, titulo=a.titulo[:200], materia=a.materia.nome,
+                   inicio=agora(), fim=agora(), segundos=0)
+    db.session.add(sp)
+    db.session.commit()
+    return jsonify(ok=True, sessao=sp.id)
+
+
+@app.post("/api/sessao/<int:sid>/ping")
+def api_sessao_ping(sid):
+    sp = db.get_or_404(SessaoPdf, sid)
+    u = usuario_atual()
+    if u and sp.usuario != u.login:
+        abort(403)
+    d = request.get_json(silent=True, force=True) or {}
+    try:
+        seg = max(0, min(90, int(d.get("seg", 0))))  # no máximo 90 s por aviso (aba aberta e visível)
+    except (TypeError, ValueError):
+        seg = 0
+    sp.segundos = (sp.segundos or 0) + seg
+    sp.fim = agora()
+    db.session.commit()
+    return jsonify(ok=True, total=sp.segundos)
+
+
 @app.route("/aula/<int:aid>/pdf")
 def aula_pdf(aid):
     a = db.get_or_404(Aula, aid)
@@ -1454,8 +1635,9 @@ def aula_pdf(aid):
 def aula_ler(aid):
     a = db.get_or_404(Aula, aid)
     n = len(a.leituras) + 1
-    db.session.add(Leitura(aula_id=a.id, numero=n, lida_em=agora()))
+    db.session.add(Leitura(aula_id=a.id, numero=n, lida_em=agora(), usuario=_login_atual()))
     db.session.commit()
+    acao(f"Concluiu a {n}ª leitura: {a.titulo} ({a.materia.nome})")
     flash(f"{n}ª leitura registrada! +{20 if n == 1 else 10} XP", "ok")
     return redirect(url_for("aula_ver", aid=aid))
 
@@ -1464,8 +1646,10 @@ def aula_ler(aid):
 def aula_desfazer(aid):
     a = db.get_or_404(Aula, aid)
     if a.leituras:
+        n = len(a.leituras)
         db.session.delete(a.leituras[-1])
         db.session.commit()
+        acao(f"Desfez a {n}ª leitura: {a.titulo}")
         flash("Última leitura removida.", "info")
     return redirect(url_for("aula_ver", aid=aid))
 
@@ -1485,6 +1669,7 @@ def aula_editar(aid):
 def aula_excluir(aid):
     a = db.get_or_404(Aula, aid)
     mid = a.materia_id
+    acao(f"Excluiu a aula: {a.titulo} ({a.materia.nome})")
     db.session.delete(a)
     db.session.commit()
     flash("Aula excluída.", "info")
@@ -1729,6 +1914,7 @@ def api_iniciar(cid):
                       total=len(c.gabarito), xp=0, respostas_json="{}", finalizada=False)
         db.session.add(t)
         db.session.commit()
+        acao(f"Iniciou bateria: {c.titulo} ({c.materia.nome}, {len(c.gabarito)} questões)")
     return jsonify(ok=True, tentativa=t.id, **_estado(t))
 
 
@@ -1778,6 +1964,7 @@ def api_finalizar(tid):
         t.xp = t.acertos + (25 if t.percentual >= meta and t.respondidas >= 5 else 0)
         t.finalizada = True
         db.session.commit()
+        acao(f"Encerrou bateria: {t.caderno.titulo} — {t.acertos}/{t.respondidas} acertos ({t.percentual:.0f}%)")
     return jsonify(ok=True, url=url_for("tentativa_ver", tid=t.id))
 
 
@@ -1812,6 +1999,7 @@ def caderno_resetar(cid):
     """Apaga todas as baterias (tentativas) do caderno; as questões continuam."""
     c = db.get_or_404(Caderno, cid)
     n = len(c.tentativas)
+    acao(f"Resetou caderno: {c.titulo} ({n} bateria(s) apagada(s))")
     for t in list(c.tentativas):
         db.session.delete(t)
     db.session.commit()
@@ -1825,6 +2013,7 @@ def caderno_resetar(cid):
 def caderno_excluir(cid):
     c = db.get_or_404(Caderno, cid)
     mid = c.materia_id
+    acao(f"Apagou caderno: {c.titulo} ({c.materia.nome})")
     db.session.delete(c)
     db.session.commit()
     flash("Caderno excluído.", "info")
@@ -1836,17 +2025,23 @@ def caderno_excluir(cid):
 def api_aula_leitura(aid):
     """Círculo da tela Evolução: acao=ler registra leitura; acao=desfazer remove a última."""
     a = db.get_or_404(Aula, aid)
-    acao = (request.get_json(silent=True) or {}).get("acao", "ler")
-    if acao == "desmarcar":  # círculo volta a ficar vazio
+    oper = (request.get_json(silent=True) or {}).get("acao", "ler")
+    if oper == "desmarcar":  # círculo volta a ficar vazio
         for l in list(a.leituras):
             db.session.delete(l)
-    elif acao == "desfazer":
+    elif oper == "desfazer":
         if a.leituras:
             db.session.delete(a.leituras[-1])
     else:
-        db.session.add(Leitura(aula_id=a.id, numero=len(a.leituras) + 1, lida_em=agora()))
+        db.session.add(Leitura(aula_id=a.id, numero=len(a.leituras) + 1, lida_em=agora(), usuario=_login_atual()))
+    antes = len(a.leituras)
     db.session.commit()
     db.session.refresh(a)
+    depois = len(a.leituras)
+    if depois > antes:
+        acao(f"Concluiu a {depois}ª leitura (pela Evolução): {a.titulo}")
+    elif depois < antes:
+        acao(f"Desfez leitura (pela Evolução): {a.titulo} — agora {depois}x")
     s = stats_materia(a.materia)
     return jsonify(ok=True, leituras=len(a.leituras),
                    ultima=a.leituras[-1].lida_em.strftime("%d/%m/%Y %H:%M") if a.leituras else None,
@@ -1858,8 +2053,11 @@ def api_aula_titulo(aid):
     """Renomear aula (tela da matéria). Vazio = volta ao nome do arquivo."""
     a = db.get_or_404(Aula, aid)
     t = ((request.get_json(silent=True) or {}).get("titulo") or "").strip()
+    antigo = a.titulo
     a.titulo = t[:200] if t else nome_padrao(a.arquivo_nome)
     db.session.commit()
+    if antigo != a.titulo:
+        acao(f"Renomeou aula: “{antigo}” → “{a.titulo}”")
     return jsonify(ok=True, titulo=a.titulo)
 
 
@@ -1990,6 +2188,73 @@ def historico():
     return render_template("historico.html", materias=[(m, stats_materia(m), por_assunto(m)) for m in materias],
                            cal=cal, proxima=proxima, plano_aula=plano_aula, cal_hoje=hoje(), ordem_cards=ordem_cards(),
                            pontos=pontos, semanas=semanas, eventos=eventos[:20])
+
+
+def resumo_de_dia(d, cfg=None, aulas=None, leituras=None, tents=None):
+    """Meta e realizado de um dia (usa a foto do plano; se não houver, estima a meta)."""
+    cfg = cfg or configs()
+    alvo = max(1, int(cfg_num(cfg, "meta_leituras_por_aula")))
+    limite = _data_cfg(cfg, "data_limite_leituras")
+    ini, fim = dt0(d), dt0(d + timedelta(days=1))
+    aulas = aulas if aulas is not None else Aula.query.all()
+    leituras = leituras if leituras is not None else Leitura.query.all()
+    tents = tents if tents is not None else Tentativa.query.all()
+    snap = db.session.get(MetaDia, d)
+    do_dia = [l for l in leituras if ini <= l.lida_em < fim]
+    if snap:
+        meta, estimada = snap.meta_leituras, False
+        meta_q = snap.meta_questoes or QUESTOES_MINIMO
+    else:
+        existentes = [a for a in aulas if (a.criada_em or ini) < fim]
+        antes = {}
+        for l in leituras:
+            if l.lida_em < ini:
+                antes[l.aula_id] = antes.get(l.aula_id, 0) + 1
+        restante = sum(max(0, alvo - antes.get(a.id, 0)) for a in existentes)
+        dias = (limite - d).days + 1
+        meta = math.ceil(restante / dias) if dias > 0 and restante else 0
+        estimada = True
+        meta_q = max(QUESTOES_MINIMO, int(cfg_num(cfg, "meta_questoes_dia")))
+    tq = [t for t in tents if ini <= t.feita_em < fim]
+    q = sum(t.respondidas for t in tq)
+    ac = sum(t.acertos for t in tq)
+    ok_l, ok_q = len(do_dia) >= meta, q >= meta_q
+    humor = "radiante" if ok_l and ok_q else "feliz" if ok_l or ok_q else "bravo" if (do_dia or q) else "furioso"
+    return {"data": d, "meta": meta, "estimada": estimada, "feitas": len(do_dia), "leituras": do_dia,
+            "meta_q": meta_q, "questoes": q, "acertos": ac, "baterias": tq, "snap": snap,
+            "ok_l": ok_l, "ok_q": ok_q, "humor": humor}
+
+
+@app.route("/metas/dias")
+def metas_dias():
+    cfg = configs()
+    h = hoje()
+    aulas, leituras, tents = Aula.query.all(), Leitura.query.all(), Tentativa.query.all()
+    primeira = min([l.lida_em.date() for l in leituras] + [t.feita_em.date() for t in tents] +
+                   [m.data for m in MetaDia.query.all()] + [h])
+    try:
+        sel = date.fromisoformat(request.args.get("data", ""))
+    except ValueError:
+        sel = h - timedelta(days=1) if h > primeira else h
+    sel = min(sel, h)
+    inicio_lista = max(primeira, h - timedelta(days=60))
+    lista = [resumo_de_dia(h - timedelta(days=k), cfg, aulas, leituras, tents)
+             for k in range((h - inicio_lista).days + 1)]
+    det = resumo_de_dia(sel, cfg, aulas, leituras, tents)
+    por_id = {a.id: a for a in aulas}
+    planejadas = []
+    if det["snap"]:
+        ini_sel, fim_sel = dt0(sel), dt0(sel + timedelta(days=1))
+        for aid in det["snap"].planejadas:
+            a = por_id.get(aid)
+            if not a:
+                continue
+            no_dia = any(ini_sel <= l.lida_em < fim_sel for l in a.leituras)
+            depois = [l.lida_em for l in a.leituras if l.lida_em >= fim_sel]
+            planejadas.append({"aula": a, "no_dia": no_dia, "depois": min(depois) if depois else None})
+    sess = SessaoPdf.query.filter(SessaoPdf.inicio >= dt0(sel), SessaoPdf.inicio < dt0(sel + timedelta(days=1))).all()
+    return render_template("metas_dias.html", lista=lista, det=det, sel=sel, planejadas=planejadas, timedelta1=timedelta(days=1),
+                           tempo_dia=sum(x.segundos or 0 for x in sess), hoje_d=h, primeira=primeira)
 
 
 @app.route("/metas", methods=["GET", "POST"])

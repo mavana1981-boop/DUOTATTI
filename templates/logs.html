@@ -5,6 +5,13 @@
 .ev.login{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok2)}
 .ev.logout{background:var(--soft);color:var(--mut)}
 .ev.falha{background:color-mix(in srgb,var(--err) 15%,transparent);color:var(--err)}
+.ev.acao{background:color-mix(in srgb,var(--xp) 20%,transparent);color:var(--xp2)}
+.abas{display:flex;gap:6px;margin:6px 0 10px}
+.abas a{text-decoration:none;font-weight:900;padding:8px 14px;border-radius:12px;color:var(--mut);border:2px solid var(--line)}
+.abas a.on{color:#fff;background:var(--ok);border-color:var(--ok)}
+.dia-l{display:flex;gap:10px;align-items:center;padding:4px 0;font-size:.88rem}
+.dia-l .dl{width:84px;font-weight:800;color:var(--mut)}
+.dia-l .dv{width:120px;text-align:right;color:var(--mut);font-weight:700}
 .ev.pagina{background:color-mix(in srgb,var(--blue) 12%,transparent);color:var(--blue2)}
 .logs td{vertical-align:top}
 .logs .ap{color:var(--mut);font-size:.78rem;max-width:280px;overflow-wrap:anywhere}
@@ -13,7 +20,64 @@
 @media (max-width:640px){.logs .col-ap,.logs .col-ip{display:none}}
 {% endblock %}
 {% block conteudo %}
-<h1>Logs de acesso</h1>
+<h1>Logs</h1>
+<div class="abas">
+  <a href="{{ url_for('logs', aba='acessos') }}" class="{{ 'on' if aba == 'acessos' }}">Acessos</a>
+  <a href="{{ url_for('logs', aba='estudo') }}" class="{{ 'on' if aba == 'estudo' }}">Estudo</a>
+</div>
+{% if aba == 'estudo' %}
+<p class="sub">O que cada usuário estudou: tempo com cada PDF aberto (só conta com a tela visível), leituras concluídas e ações.</p>
+<section class="card">
+  <form class="filtros" method="get">
+    <input type="hidden" name="aba" value="estudo">
+    <div><label class="f">Usuário</label>
+      <select name="usuario"><option value="">Todos</option>
+        {% for u in usuarios %}<option value="{{ u.login }}" {{ 'selected' if u.login == f_usuario }}>{{ u.login }}</option>{% endfor %}
+      </select></div>
+    <div><label class="f">De</label><input type="date" name="de" value="{{ de.isoformat() }}"></div>
+    <div><label class="f">Até</label><input type="date" name="ate" value="{{ ate.isoformat() }}"></div>
+    <div><button class="btn mini">Filtrar</button></div>
+  </form>
+</section>
+<section class="grid g4" style="margin-bottom:16px">
+  <div class="stat"><small>Tempo com PDFs abertos</small><b>{{ total_seg|tempo }}</b></div>
+  <div class="stat"><small>Leituras concluídas</small><b>{{ total_leit }}</b></div>
+  <div class="stat"><small>PDFs abertos</small><b>{{ pdfs|selectattr('sessoes')|list|length }}</b></div>
+  <div class="stat"><small>Período</small><b style="font-size:1rem">{{ de.strftime('%d/%m') }} a {{ ate.strftime('%d/%m') }}</b></div>
+</section>
+<section class="card">
+  <h2>Por dia</h2>
+  {% set mx = [1] + dias|map(attribute='1')|map(attribute='segundos')|list %}{% set mx = mx|max %}
+  {% for d, v in dias %}
+  <div class="dia-l"><span class="dl">{{ ['seg','ter','qua','qui','sex','sáb','dom'][d.weekday()] }} {{ d.strftime('%d/%m') }}</span>
+    <div class="bar azul" style="flex:1"><i style="width:{{ (100 * v.segundos / mx)|round }}%"></i></div>
+    <span class="dv">{{ v.segundos|tempo if v.segundos else '—' }} · {{ v.leituras }} leit.</span></div>
+  {% endfor %}
+</section>
+<section class="card" style="overflow-x:auto">
+  <h2>Tempo em cada PDF</h2>
+  <table class="logs">
+    <tr><th>Aula</th><th>Tempo</th><th>Aberturas</th><th>Leituras concluídas</th><th>Última vez</th><th class="col-ip">Quem</th></tr>
+    {% for p in pdfs %}
+    <tr><td><b>{{ p.titulo }}</b><br><small class="mut">{{ p.materia }}</small></td>
+      <td style="white-space:nowrap"><b>{{ p.segundos|tempo if p.segundos else '—' }}</b></td>
+      <td>{{ p.sessoes }}</td><td>{{ p.leituras }}</td>
+      <td style="white-space:nowrap">{{ p.ultima|dt }}</td>
+      <td class="col-ip">{{ p.usuarios|join(', ') }}</td></tr>
+    {% else %}<tr><td colspan="6" class="mut">Nenhum PDF aberto no período.</td></tr>{% endfor %}
+  </table>
+  <p class="hint">O tempo começou a ser medido nesta versão do app; antes dela só há as leituras concluídas.</p>
+</section>
+<section class="card" style="overflow-x:auto">
+  <h2>O que foi feito</h2>
+  <table class="logs">
+    <tr><th>Quando</th><th>Usuário</th><th>Ação</th></tr>
+    {% for l in acoes %}
+    <tr><td style="white-space:nowrap">{{ l.quando|dt('%d/%m %H:%M') }}</td><td><b>{{ l.usuario }}</b></td><td>{{ l.detalhe }}</td></tr>
+    {% else %}<tr><td colspan="3" class="mut">Nenhuma ação no período.</td></tr>{% endfor %}
+  </table>
+</section>
+{% else %}
 <p class="sub">Entradas, saídas, senhas erradas e páginas abertas. Mostrando os 500 registros mais recentes.</p>
 
 <section class="grid g2" style="margin-bottom:16px">
@@ -35,7 +99,7 @@
       </select></div>
     <div><label class="f">Evento</label>
       <select name="evento"><option value="">Todos</option>
-        {% for e, rot in [('login','Entrou'),('logout','Saiu'),('falha','Senha errada'),('pagina','Página aberta')] %}
+        {% for e, rot in [('login','Entrou'),('logout','Saiu'),('falha','Senha errada'),('pagina','Página aberta'),('acao','Ação de estudo')] %}
         <option value="{{ e }}" {{ 'selected' if e == f_evento }}>{{ rot }}</option>{% endfor %}
       </select></div>
     <div><button class="btn mini">Filtrar</button></div>
@@ -49,8 +113,8 @@
     <tr>
       <td style="white-space:nowrap">{{ l.quando|dt('%d/%m/%Y %H:%M:%S') }}</td>
       <td><b>{{ l.usuario }}</b></td>
-      <td><span class="ev {{ l.evento }}">{{ {'login':'entrou','logout':'saiu','falha':'senha errada','pagina':'página'}.get(l.evento, l.evento) }}</span></td>
-      <td style="overflow-wrap:anywhere">{{ l.caminho }}</td>
+      <td><span class="ev {{ l.evento }}">{{ {'login':'entrou','logout':'saiu','falha':'senha errada','pagina':'página','acao':'ação'}.get(l.evento, l.evento) }}</span></td>
+      <td style="overflow-wrap:anywhere">{{ l.detalhe or l.caminho }}</td>
       <td class="col-ip">{{ l.ip }}</td>
       <td class="ap col-ap">{{ l.aparelho }}</td>
     </tr>
@@ -59,4 +123,5 @@
     {% endfor %}
   </table>
 </section>
+{% endif %}
 {% endblock %}

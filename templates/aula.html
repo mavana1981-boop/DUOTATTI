@@ -17,7 +17,7 @@
 <div class="lay">
   <div>
     <iframe class="pdf" src="{{ url_for('aula_pdf', aid=a.id) }}#view=FitH" title="PDF da aula"></iframe>
-    <p class="hint"><a href="{{ url_for('aula_pdf', aid=a.id) }}" target="_blank" rel="noopener">Abrir o PDF em tela cheia / nova aba</a> (recomendado no celular).</p>
+    <p class="hint"><a href="{{ url_for('aula_tela_cheia', aid=a.id) }}">Abrir em tela cheia</a> (recomendado no celular). O tempo de leitura é registrado enquanto a aula está aberta.</p>
   </div>
   <aside>
     <div class="card" style="text-align:center">
@@ -56,5 +56,6 @@
 </div>
 {% endblock %}
 {% block js %}
+{% include "_rastreio_pdf.html" %}
 {% include "_vinculos_js.html" %}
 {% endblock %}

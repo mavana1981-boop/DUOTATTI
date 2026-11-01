@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{ a.titulo }} · DUOTATTI</title>
+<style>
+html,body{margin:0;height:100%;background:#1d2433;font-family:Nunito,system-ui,sans-serif}
+.barra{display:flex;align-items:center;gap:8px;padding:8px 10px;padding-top:calc(8px + env(safe-area-inset-top));background:#1d2433;color:#fff}
+.barra a,.barra button{color:#fff;font:800 .85rem Nunito,system-ui,sans-serif;text-decoration:none;border:0;border-radius:10px;padding:8px 12px;cursor:pointer;background:rgba(255,255,255,.12)}
+.barra button{background:#2fb36d}
+.barra .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:800;font-size:.9rem}
+iframe{display:block;width:100%;height:calc(100% - 52px - env(safe-area-inset-top));border:0;background:#fff}
+</style>
+</head>
+<body>
+<div class="barra">
+  <a href="{{ url_for('aula_ver', aid=a.id) }}">‹ Voltar</a>
+  <span class="t">{{ a.titulo }}</span>
+  <form method="post" action="{{ url_for('aula_ler', aid=a.id) }}" style="margin:0"><button>Concluí a {{ a.leituras|length + 1 }}ª leitura</button></form>
+</div>
+<iframe src="{{ url_for('aula_pdf', aid=a.id) }}#view=FitH" title="PDF da aula"></iframe>
+{% include "_rastreio_pdf.html" %}
+</body>
+</html>

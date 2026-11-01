@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% from "_tatti.html" import tatti %}
+{% block titulo %}Metas de dias anteriores{% endblock %}
+{% block css %}
+.busca{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+.busca input{max-width:180px}
+.det-topo{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:center}
+@media (max-width:560px){.det-topo{grid-template-columns:1fr;justify-items:center;text-align:center}}
+.ok-l{color:var(--ok);font-weight:900}.no-l{color:var(--err);font-weight:900}
+.pl{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line)}
+.pl:last-child{border-bottom:0}
+.pl i{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;color:#fff;font-style:normal;font-weight:900;font-size:.8rem;margin-top:1px}
+.pl i.s{background:var(--ok)}.pl i.d{background:var(--xp)}.pl i.n{background:var(--err)}
+.dias td{white-space:nowrap}
+.dias tr.sel td{background:color-mix(in srgb,var(--blue) 9%,transparent)}
+.dias a{text-decoration:none;font-weight:800}
+.mini-av{width:26px;height:26px;border-radius:7px;vertical-align:middle;background:#fff}
+{% endblock %}
+{% block conteudo %}
+<a href="{{ url_for('index') }}" class="mut" style="text-decoration:none;font-weight:800">‹ Meta de hoje</a>
+<h1 style="margin-top:4px">Metas de dias anteriores</h1>
+<p class="sub">Escolha um dia para ver o que estava planejado e o que foi feito.</p>
+
+<section class="card">
+  <form class="busca" method="get">
+    <div><label class="f" for="d">Dia</label>
+      <input type="date" id="d" name="data" value="{{ sel.isoformat() }}" min="{{ primeira.isoformat() }}" max="{{ hoje_d.isoformat() }}"></div>
+    <button class="btn mini">Ver dia</button>
+    <a class="btn claro mini" href="{{ url_for('metas_dias', data=(sel - timedelta1).isoformat()) }}" {{ 'hidden' if sel <= primeira }}>‹ Dia anterior</a>
+    <a class="btn claro mini" href="{{ url_for('metas_dias', data=(sel + timedelta1).isoformat()) }}" {{ 'hidden' if sel >= hoje_d }}>Dia seguinte ›</a>
+  </form>
+</section>
+
+<section class="card">
+  <div class="det-topo">
+    {{ tatti(det.humor, 110) }}
+    <div>
+      <h2 style="margin:0">{{ ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'][sel.weekday()] }}, {{ sel.strftime('%d/%m/%Y') }}{% if sel == hoje_d %} (hoje){% endif %}</h2>
+      <p style="margin:6px 0 0">
+        Leituras: <span class="{{ 'ok-l' if det.ok_l else 'no-l' }}">{{ det.feitas }}/{{ det.meta }}</span>{% if det.estimada %} <small class="mut">(meta estimada)</small>{% endif %}
+        · Questões: <span class="{{ 'ok-l' if det.ok_q else 'no-l' }}">{{ det.questoes }}/{{ det.meta_q }}</span>
+        {% if det.questoes %}· acerto {{ (100 * det.acertos / det.questoes)|round|int }}%{% endif %}
+        · Tempo com PDFs: <b>{{ tempo_dia|tempo if tempo_dia else '—' }}</b>
+      </p>
+      <p style="margin:6px 0 0;font-weight:800">{{ 'Meta do dia cumprida!' if det.ok_l and det.ok_q else ('Metade da meta cumprida.' if det.ok_l or det.ok_q else 'Meta do dia não cumprida.') }}</p>
+    </div>
+  </div>
+</section>
+
+<div class="grid g2">
+  <section class="card">
+    <h2>Planejadas para o dia{% set pg = planejadas|map(attribute='aula')|map(attribute='paginas')|select|sum %}{% if pg %} <small class="mut">· {{ pg }} páginas</small>{% endif %}</h2>
+    {% if det.snap %}
+      {% for p in planejadas %}
+      <div class="pl">
+        {% if p.no_dia %}<i class="s">✓</i>{% elif sel == hoje_d %}<i class="d">…</i>{% elif p.depois %}<i class="d">↻</i>{% else %}<i class="n">!</i>{% endif %}
+        <div><b>{{ p.aula.titulo }}</b><br><small class="mut">{{ p.aula.materia.nome }} ·
+          {% if p.aula.paginas %}{{ p.aula.paginas }} pág. · {% endif %}
+          {% if p.no_dia %}lida no dia{% elif sel == hoje_d %}a ler hoje{% elif p.depois %}não lida no dia — feita em {{ p.depois.strftime('%d/%m') }}{% else %}não lida — remarcada para os próximos dias{% endif %}</small></div>
+      </div>
+      {% else %}<p class="mut">Nenhuma aula planejada.</p>{% endfor %}
+    {% else %}
+      <p class="mut">A lista do que estava planejado só é guardada a partir desta versão do app. Para este dia, a meta foi estimada pelas leituras que faltavam.</p>
+    {% endif %}
+  </section>
+  <section class="card">
+    <h2>Feito no dia</h2>
+    {% for l in det.leituras|sort(attribute='lida_em') %}
+    <div class="pl"><i class="s">✓</i><div><b>{{ l.aula.titulo if l.aula else 'aula excluída' }}</b><br>
+      <small class="mut">{% if l.aula and l.aula.paginas %}{{ l.aula.paginas }} pág. · {% endif %}{{ l.numero }}ª leitura · {{ l.lida_em.strftime('%H:%M') }}{% if l.usuario %} · {{ l.usuario }}{% endif %}</small></div></div>
+    {% else %}<p class="mut">Nenhuma leitura concluída.</p>{% endfor %}
+    {% for t in det.baterias %}
+    <div class="pl"><i class="{{ 's' if t.percentual >= meta_acerto else 'n' }}">?</i><div><b>{{ t.caderno.titulo }}</b><br>
+      <small class="mut">{{ t.acertos }}/{{ t.respondidas }} acertos ({{ t.percentual|pct }}){% if t.finalizada is false %} · em andamento{% endif %}</small></div></div>
+    {% endfor %}
+  </section>
+</div>
+
+<section class="card" style="overflow-x:auto">
+  <h2>Todos os dias</h2>
+  <table class="dias">
+    <tr><th></th><th>Dia</th><th>Leituras</th><th>Questões</th><th>Meta</th></tr>
+    {% for r in lista %}
+    <tr class="{{ 'sel' if r.data == sel }}">
+      <td><img class="mini-av" src="{{ url_for('static', filename='avatar/' ~ r.humor ~ '.png') }}" alt=""></td>
+      <td><a href="{{ url_for('metas_dias', data=r.data.isoformat()) }}">{{ ['seg','ter','qua','qui','sex','sáb','dom'][r.data.weekday()] }} {{ r.data.strftime('%d/%m') }}</a></td>
+      <td class="{{ 'ok-l' if r.ok_l else 'no-l' }}">{{ r.feitas }}/{{ r.meta }}{{ '*' if r.estimada }}</td>
+      <td class="{{ 'ok-l' if r.ok_q else 'no-l' }}">{{ r.questoes }}/{{ r.meta_q }}</td>
+      <td>{{ '✓ cumprida' if r.ok_l and r.ok_q else ('½' if r.ok_l or r.ok_q else '✗') }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="hint">* meta estimada (dias antes de o app guardar o plano diário).</p>
+</section>
+{% endblock %}
