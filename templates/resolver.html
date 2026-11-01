@@ -260,6 +260,7 @@
       const d = await api('/api/caderno/' + CID + '/iniciar', {nova: !!nova});
       tid = d.tentativa; estado = d;
       $('tela-inicio').hidden = true; $('tela-quiz').hidden = false;
+      if (!NUMS.length) { alert('Este caderno ainda não tem questões montadas. Use Opções do caderno › Ler com IA.'); location.reload(); return; }
       const k = proximaPendente(-1); abre(k < 0 ? 0 : k);
     } catch (_) { alert('Não foi possível iniciar a bateria.'); }
   }

@@ -24,8 +24,18 @@
 <div class="abas">
   <a href="{{ url_for('logs', aba='acessos') }}" class="{{ 'on' if aba == 'acessos' }}">Acessos</a>
   <a href="{{ url_for('logs', aba='estudo') }}" class="{{ 'on' if aba == 'estudo' }}">Estudo</a>
+  <a href="{{ url_for('logs', aba='erros') }}" class="{{ 'on' if aba == 'erros' }}">Erros</a>
 </div>
-{% if aba == 'estudo' %}
+{% if aba == 'erros' %}
+<p class="sub">Erros do servidor (os 100 mais recentes). Copie o detalhe e me envie para eu corrigir.</p>
+{% for e in erros %}
+<details class="card" {{ 'open' if loop.first }}>
+  <summary style="cursor:pointer"><b>#{{ e.id }}</b> · {{ e.quando|dt('%d/%m %H:%M:%S') }} · {{ e.usuario or '—' }} · <code>{{ e.caminho }}</code><br>
+    <span style="color:var(--err);font-weight:800">{{ e.tipo }}: {{ (e.mensagem or '')[:200] }}</span></summary>
+  <pre style="white-space:pre-wrap;font-size:.75rem;background:var(--bg);padding:10px;border-radius:10px;overflow:auto;max-height:420px">{{ e.rastreio }}</pre>
+</details>
+{% else %}<p class="mut">Nenhum erro registrado. 🎉</p>{% endfor %}
+{% elif aba == 'estudo' %}
 <p class="sub">O que cada usuário estudou: tempo com cada PDF aberto (só conta com a tela visível), leituras concluídas e ações.</p>
 <section class="card">
   <form class="filtros" method="get">

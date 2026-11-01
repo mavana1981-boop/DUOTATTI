@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% from "_tatti.html" import tatti %}
+{% block titulo %}Ops{% endblock %}
+{% block conteudo %}
+<section class="card" style="max-width:520px;margin:30px auto;text-align:center">
+  <div style="display:flex;justify-content:center">{{ tatti('bravo', 120) }}</div>
+  <h1 style="margin-top:10px">Ops, algo deu errado aqui</h1>
+  <p class="sub">Não foi culpa sua. O erro ficou registrado{% if codigo %} com o código <b>#{{ codigo }}</b>{% endif %}.</p>
+  <div class="row" style="justify-content:center;gap:10px">
+    <a class="btn" href="{{ url_for('index') }}">Voltar ao início</a>
+    <a class="btn claro" href="javascript:history.back()">Voltar</a>
+  </div>
+</section>
+{% endblock %}

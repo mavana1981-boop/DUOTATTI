@@ -270,6 +270,17 @@ class PushInscricao(db.Model):
 USUARIOS_INICIAIS = [("admin", "Administrador", "admin", True), ("renata", "Renata", "tatti", False)]
 
 
+class ErroApp(db.Model):
+    """Erros do servidor, para o admin ver em Logs › Erros."""
+    id = db.Column(db.Integer, primary_key=True)
+    quando = db.Column(db.DateTime, default=agora, index=True)
+    usuario = db.Column(db.String(60))
+    caminho = db.Column(db.String(300))
+    tipo = db.Column(db.String(120))
+    mensagem = db.Column(db.Text)
+    rastreio = db.Column(db.Text)
+
+
 class Config(db.Model):
     chave = db.Column(db.String(50), primary_key=True)
     valor = db.Column(db.String(200))
@@ -1145,7 +1156,9 @@ def humor_atual():
     if "humor_atual" not in g:
         try:
             calcular_humor()
-        except Exception:
+        except Exception as e:  # noqa: BLE001
+            db.session.rollback()  # no Postgres, um erro "trava" a transação e derrubaria a página
+            registrar_erro(e)
             g.humor_atual = "neutro"
     return g.humor_atual
 
@@ -1453,6 +1466,9 @@ app.jinja_env.filters["tempo"] = _fmt_tempo
 @so_admin
 def logs():
     aba = request.args.get("aba", "acessos")
+    if aba == "erros":
+        erros = ErroApp.query.order_by(ErroApp.quando.desc()).limit(100).all()
+        return render_template("logs.html", aba=aba, erros=erros, usuarios=[], f_usuario="", f_evento="")
     f_usuario = request.args.get("usuario", "")
     f_evento = request.args.get("evento", "")
     usuarios = Usuario.query.order_by(Usuario.login).all()
@@ -1681,15 +1697,26 @@ def montar_questoes(c, extra=None):
     """(Re)constrói as questões do caderno a partir do PDF. Retorna quantas ficaram completas."""
     Questao.query.filter_by(caderno_id=c.id).delete()
     gab = c.gabarito
-    if not gab or not c.pdf_questoes:
+    if not gab:
+        db.session.commit()
+        return 0
+    if not c.pdf_questoes:  # sem PDF: questões só com as letras, uma por número do gabarito
+        for n in gab:
+            db.session.add(Questao(caderno_id=c.id, numero=n, enunciado="", alternativas_json="{}", ok=False))
         db.session.commit()
         return 0
     try:
         paginas = [p.extract_text() or "" for p in PdfReader(io.BytesIO(c.pdf_questoes)).pages]
     except Exception:
         paginas = []
-    texto = QZ.cortar_gabarito(QZ.limpar_paginas(paginas), parse_gabarito_texto)
-    res = QZ.extrair_questoes(texto, list(gab))
+    try:
+        texto = QZ.cortar_gabarito(QZ.limpar_paginas(paginas), parse_gabarito_texto)
+        res = QZ.extrair_questoes(texto, list(gab))
+    except Exception as e:  # noqa: BLE001  leitor simples falhou: segue só com as letras
+        registrar_erro(e)
+        res = {}
+    for n in gab:
+        res.setdefault(n, {"fonte": "", "enunciado": "", "alternativas": {}, "apoio": "", "ok": False})
     for n, q in (extra or {}).items():  # leitura da IA tem prioridade
         if n in gab and (q["ok"] or not res.get(n, {}).get("ok")):
             res[n] = q
@@ -1872,7 +1899,7 @@ def caderno_resolver(cid):
     if not c.gabarito:
         flash("Este caderno ainda não tem gabarito.", "erro")
         return redirect(url_for("caderno_gabarito", cid=cid))
-    if not Questao.query.filter_by(caderno_id=c.id).count():
+    if Questao.query.filter_by(caderno_id=c.id).count() < len(c.gabarito):
         montar_questoes(c)
         if IA.disponivel() and not c.ia_status:
             enfileirar_ia(c)
@@ -2287,6 +2314,32 @@ def metas():
                "lendo": sum(1 for c in cads if ia_ocupada(c)),
                "erro": sum(1 for c in cads if c.ia_status == "erro")}
     return render_template("metas.html", h=calcular_humor(), p=plano_do_dia(), ia=ia_info)
+
+
+def registrar_erro(e):
+    import traceback
+    try:
+        db.session.rollback()
+        u = g.get("usuario_atual")
+        er = ErroApp(quando=agora(), usuario=(u.login if u else None), tipo=e.__class__.__name__[:120],
+                     caminho=(request.full_path.rstrip("?") if request else "")[:300], mensagem=str(e)[:2000],
+                     rastreio="".join(traceback.format_exception(type(e), e, e.__traceback__))[-8000:])
+        db.session.add(er)
+        db.session.commit()
+        return er.id
+    except Exception:  # noqa: BLE001
+        db.session.rollback()
+        return None
+
+
+@app.errorhandler(500)
+def erro_interno(e):
+    orig = getattr(e, "original_exception", None) or e
+    app.logger.exception("Erro em %s", request.path)
+    cod = registrar_erro(orig)
+    if request.path.startswith("/api/"):
+        return jsonify(ok=False, erro="erro interno", codigo=cod), 500
+    return render_template("erro.html", codigo=cod), 500
 
 
 @app.errorhandler(413)
