@@ -36,7 +36,7 @@
 </details>
 {% else %}<p class="mut">Nenhum erro registrado. 🎉</p>{% endfor %}
 {% elif aba == 'estudo' %}
-<p class="sub">O que cada usuário estudou: tempo com cada PDF aberto (só conta com a tela visível), leituras concluídas e ações.</p>
+<p class="sub">O que cada usuário estudou: tempo com cada PDF aberto (só conta com a tela visível), leituras concluídas e ações. O admin não aparece.</p>
 <section class="card">
   <form class="filtros" method="get">
     <input type="hidden" name="aba" value="estudo">
@@ -88,7 +88,7 @@
   </table>
 </section>
 {% else %}
-<p class="sub">Entradas, saídas, senhas erradas e páginas abertas. Mostrando os 500 registros mais recentes.</p>
+<p class="sub">Entradas, saídas, senhas erradas e páginas abertas dos usuários (o admin não aparece). Mostrando os 500 registros mais recentes.</p>
 
 <section class="grid g2" style="margin-bottom:16px">
   {% for r in resumo %}

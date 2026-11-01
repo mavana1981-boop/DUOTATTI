@@ -17,7 +17,8 @@ from flask import (Flask, abort, flash, g, jsonify, redirect, render_template, r
 from flask_sqlalchemy import SQLAlchemy
 from jinja2 import ChoiceLoader, FileSystemLoader
 from pypdf import PdfReader
-from sqlalchemy.orm import deferred
+from sqlalchemy import event as sa_event, or_, select
+from sqlalchemy.orm import Session as SASession, deferred, with_loader_criteria
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -171,6 +172,7 @@ class Tentativa(db.Model):
     xp = db.Column(db.Integer, default=0)
     respostas_json = db.Column(db.Text, default="{}")
     finalizada = db.Column(db.Boolean, default=True)  # False = bateria em andamento (questão a questão)
+    usuario = db.Column(db.String(60))
     materia = db.relationship("Materia")
 
     @property
@@ -267,6 +269,28 @@ class PushInscricao(db.Model):
     criado_em = db.Column(db.DateTime, default=agora)
 
 
+def _sq_admins():
+    return select(Usuario.login).where(Usuario.admin.is_(True)).scalar_subquery()
+
+
+@sa_event.listens_for(SASession, "do_orm_execute")
+def _ignorar_admin(state):
+    """Leituras e baterias feitas pelo admin são testes: ficam fora de metas, humor, XP, calendário etc.
+    Use execution_options(todos=True) para enxergá-las (ex.: a própria bateria do admin)."""
+    if state.is_select and not state.execution_options.get("todos", False):
+        state.statement = state.statement.options(
+            with_loader_criteria(Leitura, lambda c: or_(c.usuario.is_(None), c.usuario.notin_(_sq_admins())),
+                                 include_aliases=True),
+            with_loader_criteria(Tentativa, lambda c: or_(c.usuario.is_(None), c.usuario.notin_(_sq_admins())),
+                                 include_aliases=True),
+        )
+
+
+def eh_admin():
+    u = usuario_atual() if request else None
+    return bool(u and u.admin)
+
+
 USUARIOS_INICIAIS = [("admin", "Administrador", "admin", True), ("renata", "Renata", "tatti", False)]
 
 
@@ -341,7 +365,7 @@ def seed():
     db.session.commit()
 
 
-NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)"), ("aula", "ordem", "INTEGER"), ("tentativa", "finalizada", "BOOLEAN DEFAULT TRUE"), ("caderno", "ia_status", "VARCHAR(20)"), ("caderno", "ia_msg", "VARCHAR(300)"), ("caderno", "ia_inicio", "TIMESTAMP"), ("log_acesso", "detalhe", "VARCHAR(300)"), ("leitura", "usuario", "VARCHAR(60)")]
+NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)"), ("aula", "ordem", "INTEGER"), ("tentativa", "finalizada", "BOOLEAN DEFAULT TRUE"), ("caderno", "ia_status", "VARCHAR(20)"), ("caderno", "ia_msg", "VARCHAR(300)"), ("caderno", "ia_inicio", "TIMESTAMP"), ("log_acesso", "detalhe", "VARCHAR(300)"), ("leitura", "usuario", "VARCHAR(60)"), ("tentativa", "usuario", "VARCHAR(60)")]
 
 
 def migrar(conn):
@@ -512,6 +536,15 @@ def contar_paginas_faltantes():
     db.session.commit()
 
 
+def limpar_registros_admin():
+    """Remove do log e das sessões de PDF o que já tinha sido gravado do admin."""
+    admins = [u.login for u in Usuario.query.filter_by(admin=True).all()]
+    if admins:
+        LogAcesso.query.filter(LogAcesso.usuario.in_(admins), LogAcesso.evento != "falha").delete(synchronize_session=False)
+        SessaoPdf.query.filter(SessaoPdf.usuario.in_(admins)).delete(synchronize_session=False)
+        db.session.commit()
+
+
 def _preparar_banco():
     if db.engine.dialect.name == "postgresql":
         with db.engine.begin() as conn:
@@ -523,6 +556,7 @@ def _preparar_banco():
             migrar(conn)
     seed()
     criar_usuarios()
+    limpar_registros_admin()
     migrar_vinculos_aulas()
     atualizar_topicos_edital()
     assuntos_para_topicos()
@@ -1385,11 +1419,19 @@ def usuario_atual():
     return g.usuario_atual
 
 
+def _logins_admin():
+    if "logins_admin" not in g:
+        g.logins_admin = {u.login for u in Usuario.query.filter_by(admin=True).all()}
+    return g.logins_admin
+
+
 def _ip():
     return (request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "")[:64]
 
 
 def registrar(evento, usuario=None, caminho=None, detalhe=None):
+    if evento != "falha" and usuario and (usuario in _logins_admin()):
+        return  # o que o admin faz não entra nos logs
     try:
         db.session.add(LogAcesso(quando=agora(), usuario=(usuario or "")[:60], evento=evento, detalhe=(detalhe or "")[:300] or None,
                                  caminho=(caminho or request.full_path.rstrip("?"))[:300], ip=_ip(),
@@ -1486,7 +1528,7 @@ def logs():
         return render_template("logs.html", aba=aba, erros=erros, usuarios=[], f_usuario="", f_evento="")
     f_usuario = request.args.get("usuario", "")
     f_evento = request.args.get("evento", "")
-    usuarios = Usuario.query.order_by(Usuario.login).all()
+    usuarios = Usuario.query.filter(Usuario.admin.isnot(True)).order_by(Usuario.login).all()
     if aba == "estudo":
         try:
             de = date.fromisoformat(request.args.get("de", ""))
@@ -1629,6 +1671,8 @@ def aula_tela_cheia(aid):
 def api_sessao_inicio(aid):
     a = db.get_or_404(Aula, aid)
     u = usuario_atual()
+    if u and u.admin:
+        return jsonify(ok=True, sessao=None)  # admin não é medido
     sp = SessaoPdf(usuario=u.login if u else "", aula_id=a.id, titulo=a.titulo[:200], materia=a.materia.nome,
                    inicio=agora(), fim=agora(), segundos=0)
     db.session.add(sp)
@@ -1669,7 +1713,10 @@ def aula_ler(aid):
     db.session.add(Leitura(aula_id=a.id, numero=n, lida_em=agora(), usuario=_login_atual()))
     db.session.commit()
     acao(f"Concluiu a {n}ª leitura: {a.titulo} ({a.materia.nome})")
-    flash(f"{n}ª leitura registrada! +{20 if n == 1 else 10} XP", "ok")
+    if eh_admin():
+        flash("Modo administrador: a leitura foi registrada como teste e não conta nas metas nem no humor da Tatti.", "info")
+    else:
+        flash(f"{n}ª leitura registrada! +{20 if n == 1 else 10} XP", "ok")
     return redirect(url_for("aula_ver", aid=aid))
 
 
@@ -1931,8 +1978,17 @@ def caderno_reprocessar(cid):
 
 
 def _tentativa_aberta(c):
-    return (Tentativa.query.filter_by(caderno_id=c.id, finalizada=False)
+    """Bateria em andamento deste usuário neste caderno."""
+    return (Tentativa.query.execution_options(todos=True)
+            .filter_by(caderno_id=c.id, finalizada=False, usuario=_login_atual())
             .order_by(Tentativa.feita_em.desc()).first())
+
+
+def _tentativa(tid):
+    t = db.session.get(Tentativa, tid, execution_options={"todos": True})
+    if t is None:
+        abort(404)
+    return t
 
 
 @app.route("/caderno/<int:cid>")
@@ -1997,7 +2053,7 @@ def api_iniciar(cid):
                 t.finalizada = True
             else:
                 db.session.delete(t)
-        t = Tentativa(caderno_id=c.id, materia_id=c.materia_id, feita_em=agora(), acertos=0, respondidas=0,
+        t = Tentativa(usuario=_login_atual(), caderno_id=c.id, materia_id=c.materia_id, feita_em=agora(), acertos=0, respondidas=0,
                       total=len(c.gabarito), xp=0, respostas_json="{}", finalizada=False)
         db.session.add(t)
         db.session.commit()
@@ -2007,14 +2063,14 @@ def api_iniciar(cid):
 
 @app.get("/api/tentativa/<int:tid>/questao/<int:n>")
 def api_questao(tid, n):
-    t = db.get_or_404(Tentativa, tid)
+    t = _tentativa(tid)
     q = Questao.query.filter_by(caderno_id=t.caderno_id, numero=n).first_or_404()
     return jsonify(ok=True, questao=_questao_json(t, q), **_estado(t))
 
 
 @app.post("/api/tentativa/<int:tid>/responder")
 def api_responder(tid):
-    t = db.get_or_404(Tentativa, tid)
+    t = _tentativa(tid)
     if t.finalizada:
         return jsonify(ok=False, erro="bateria encerrada"), 400
     d = request.get_json(silent=True) or {}
@@ -2041,7 +2097,7 @@ def api_responder(tid):
 
 @app.post("/api/tentativa/<int:tid>/finalizar")
 def api_finalizar(tid):
-    t = db.get_or_404(Tentativa, tid)
+    t = _tentativa(tid)
     if not t.respondidas:
         db.session.delete(t)
         db.session.commit()
@@ -2057,7 +2113,7 @@ def api_finalizar(tid):
 
 @app.route("/tentativa/<int:tid>")
 def tentativa_ver(tid):
-    t = db.get_or_404(Tentativa, tid)
+    t = _tentativa(tid)
     if t.finalizada is False:
         return redirect(url_for("caderno_resolver", cid=t.caderno_id))
     gab, resp = t.caderno.gabarito, t.respostas
@@ -2073,7 +2129,7 @@ def tentativa_ver(tid):
 
 @app.post("/tentativa/<int:tid>/excluir")
 def tentativa_excluir(tid):
-    t = db.get_or_404(Tentativa, tid)
+    t = _tentativa(tid)
     cid = t.caderno_id
     db.session.delete(t)
     db.session.commit()
@@ -2130,7 +2186,8 @@ def api_aula_leitura(aid):
     elif depois < antes:
         acao(f"Desfez leitura (pela Evolução): {a.titulo} — agora {depois}x")
     s = stats_materia(a.materia)
-    return jsonify(ok=True, leituras=len(a.leituras),
+    aviso = "Modo administrador: a leitura foi registrada como teste e não conta nas metas nem no humor da Tatti." if eh_admin() and oper == "ler" else None
+    return jsonify(ok=True, aviso=aviso, leituras=len(a.leituras),
                    ultima=a.leituras[-1].lida_em.strftime("%d/%m/%Y %H:%M") if a.leituras else None,
                    aulas_lidas=s["aulas_lidas"], aulas=s["aulas"])
 

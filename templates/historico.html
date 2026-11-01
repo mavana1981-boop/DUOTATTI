@@ -303,6 +303,7 @@ function pintar(aid, n, ultima) {
 async function registrar(aid, acao) {
   const r = await fetch('/api/aula/' + aid + '/leitura', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acao})});
   const d = await r.json(); if (!d.ok) throw 0;
+  if (d.aviso) alert(d.aviso);
   pintar(aid, d.leituras, d.ultima);
 }
 document.querySelectorAll('.bola').forEach(b => {
