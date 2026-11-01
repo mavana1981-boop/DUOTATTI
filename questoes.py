@@ -225,3 +225,26 @@ def cortar_gabarito(texto, parse_gabarito):
         if p > len(texto) * 0.5 and len(parse_gabarito(texto[p:], exigir_secao=True)) >= 3:
             return texto[:p]
     return texto
+
+
+RX_RESP_INLINE = re.compile(
+    r"(?i)(?:gabarito(?:\s+oficial)?|resposta(?:\s+correta)?|alternativa\s+correta|letra\s+correta)\s*[:\-–—]?\s*"
+    r"(?:(?:é|e)\s+)?(?:a\s+)?(?:letra|alternativa)?\s*\(?\s*([A-E])\s*\)?(?![A-Za-zÀ-ú])")
+
+
+def gabarito_inline(texto):
+    """Gabarito quando a resposta vem logo depois de cada questão ("Gabarito: B", "Resposta: letra C").
+    Associa cada resposta à questão numerada imediatamente anterior."""
+    marcas = []
+    for rx in ESTILOS_Q.values():
+        marcas += [(m.start(), int(m.group(1))) for m in rx.finditer(texto)]
+    marcas.sort()
+    g, ultimo, pos_ant = {}, 0, 0
+    for m in RX_RESP_INLINE.finditer(texto):
+        cands = [n for p, n in marcas if pos_ant <= p < m.start() and n > ultimo and n <= ultimo + 5]
+        if cands:
+            n = min(cands)
+            g[n] = m.group(1).upper()
+            ultimo = n
+        pos_ant = m.end()
+    return g if len(g) >= 3 else {}

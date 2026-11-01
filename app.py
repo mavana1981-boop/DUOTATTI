@@ -593,19 +593,24 @@ RX_PAR = re.compile(
 
 
 def _limpar(g):
-    """Mantém a sequência contínua de questões (tolera pequenos buracos)."""
+    """Fica com a maior sequência contínua de questões (tolera pequenos buracos).
+    Se não começar entre 1 e 5 (ex.: caderno das questões 31 a 60), exige ao menos 5 respostas."""
     if not g:
         return {}
     ks = sorted(g)
-    out, prev = {}, ks[0] - 1
-    if ks[0] > 5:
+    runs, atual = [], [ks[0]]
+    for k in ks[1:]:
+        if k <= atual[-1] + 3:
+            atual.append(k)
+        else:
+            runs.append(atual)
+            atual = [k]
+    runs.append(atual)
+    validos = [r for r in runs if r[0] <= 5 or len(r) >= 5]
+    if not validos:
         return {}
-    for k in ks:
-        if k > prev + 3:
-            break
-        out[k] = g[k]
-        prev = k
-    return out
+    melhor = max(validos, key=len)
+    return {k: g[k] for k in melhor}
 
 
 def _norm_letra(l):
@@ -645,15 +650,19 @@ def parse_gabarito_texto(txt, exigir_secao=False, manual=False):
         compacto = re.sub(r"[\s,;.\-]", "", t).upper()
         if compacto and re.fullmatch(r"[A-EX]+", compacto):
             return {i + 1: c for i, c in enumerate(compacto)}
-    pos = [m.start() for m in re.finditer(r"(?i)gabarito", t)]
-    if exigir_secao and not pos:
-        return {}
-    blocos = ([t[pos[-1]:]] if pos else []) + ([] if exigir_secao else [t])
-    for bloco in blocos:
+    # seções de gabarito (da última para a primeira): "Gabarito", "Respostas", "Chave de respostas"...
+    pos = [m.start() for m in re.finditer(r"(?i)gabarito|chave\s+de\s+respostas|\brespostas?\b|folha\s+de\s+respostas", t)]
+    blocos = [t[p:] for p in reversed(pos[-12:])] + ([] if exigir_secao else [t])
+    minimo = 1 if manual else 3
+    for k, bloco in enumerate(blocos):
         a, b = _pares(bloco), _tabular(bloco)
         melhor = a if len(a) >= len(b) else b
-        if len(melhor) >= (1 if manual else 3):
+        if len(melhor) >= (minimo if (k == 0 or not pos or k >= len(pos)) else max(minimo, 5)):
             return melhor
+    if exigir_secao:  # resposta logo após cada questão: "Gabarito: B", "Resposta: letra C"
+        g = QZ.gabarito_inline(t)
+        if len(g) >= 3:
+            return g
     return {}
 
 
@@ -1750,8 +1759,9 @@ _trabalhador = {"t": None}
 
 def _processar_ia(cid):
     c = db.session.get(Caderno, cid)
-    if not c or not c.gabarito:
+    if not c or not c.pdf_questoes:
         return
+    sem_gabarito = not c.gabarito
     c.ia_status, c.ia_inicio, c.ia_msg = "lendo", agora(), "Começando a leitura…"
     db.session.commit()
 
@@ -1760,7 +1770,21 @@ def _processar_ia(cid):
         db.session.commit()
 
     try:
-        res = IA.extrair(c.pdf_questoes, progresso)
+        if sem_gabarito:
+            res, gab = IA.extrair(c.pdf_questoes, progresso, com_gabarito=True)
+            nums = [n for n in res if res[n]["ok"]]
+            # aceita se cobrir pelo menos metade das questões lidas (evita respostas soltas)
+            if len(gab) < 3 or (nums and len([n for n in nums if n in gab]) < len(nums) / 2):
+                c = db.session.get(Caderno, cid)
+                c.ia_status = "erro"
+                c.ia_msg = "Não encontrei o gabarito escrito no PDF. Digite-o em “Corrigir gabarito”."
+                db.session.commit()
+                return
+            c = db.session.get(Caderno, cid)
+            c.gabarito = gab
+            db.session.commit()
+        else:
+            res = IA.extrair(c.pdf_questoes, progresso)
         ok = montar_questoes(c, extra=res)
         lidas = sum(1 for n, q in res.items() if n in c.gabarito and q["ok"])
         c = db.session.get(Caderno, cid)
@@ -1860,6 +1884,9 @@ def caderno_novo(mid):
     definir_topico_caderno(c, request.form.get("topico_id"), request.form.get("novo_assunto"))
     db.session.commit()
     if not gab:
+        if enfileirar_ia(c):
+            flash("Caderno criado. Não achei o gabarito com o leitor simples — a Tatti está procurando no PDF com IA.", "ok")
+            return redirect(url_for("caderno_resolver", cid=c.id))
         flash("Caderno criado, mas não consegui ler o gabarito. Digite-o abaixo.", "erro")
         return redirect(url_for("caderno_gabarito", cid=c.id))
     ok = montar_questoes(c)
@@ -1892,7 +1919,7 @@ def caderno_gabarito(cid):
                 flash(f"Gabarito salvo: {len(gab)} questões ({ok} reconstruídas).", "ok")
             return redirect(url_for("caderno_resolver", cid=cid))
     texto = "\n".join(f"{n}-{l}" for n, l in c.gabarito.items())
-    return render_template("gabarito.html", c=c, m=c.materia, texto=texto)
+    return render_template("gabarito.html", c=c, m=c.materia, texto=texto, ia_on=IA.disponivel())
 
 
 @app.post("/caderno/<int:cid>/reprocessar")
@@ -1912,9 +1939,27 @@ def _tentativa_aberta(c):
 def caderno_resolver(cid):
     c = db.get_or_404(Caderno, cid)
     if not c.gabarito:
-        flash("Este caderno ainda não tem gabarito.", "erro")
+        if not ia_ocupada(c):
+            # 1º: leitor simples ampliado; 2º: IA
+            gab = parse_gabarito_texto(extrair_texto(c.pdf_questoes), exigir_secao=True) if c.pdf_questoes else {}
+            if not gab and c.pdf_gabarito:
+                gab = parse_gabarito_texto(extrair_texto(c.pdf_gabarito))
+            if gab:
+                c.gabarito = gab
+                db.session.commit()
+                montar_questoes(c)
+                if IA.disponivel():
+                    enfileirar_ia(c)
+                flash(f"Gabarito encontrado no PDF: {len(gab)} questões.", "ok")
+                return redirect(url_for("caderno_resolver", cid=cid))
+            if IA.disponivel() and c.pdf_questoes and c.ia_status != "erro":
+                enfileirar_ia(c)
+        if ia_ocupada(c):
+            return render_template("resolver.html", c=c, m=c.materia, numeros=[], reconstruidas=0, aberta=None,
+                                   ia_on=True, ia_lendo=True, finalizadas=[])
+        flash(c.ia_msg if c.ia_status == "erro" else "Este caderno ainda não tem gabarito.", "erro")
         return redirect(url_for("caderno_gabarito", cid=cid))
-    if Questao.query.filter_by(caderno_id=c.id).count() < len(c.gabarito):
+    if Questao.query.filter_by(caderno_id=c.id).count() < len(c.gabarito) and not ia_ocupada(c):
         montar_questoes(c)
         if IA.disponivel() and not c.ia_status:
             enfileirar_ia(c)

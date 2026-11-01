@@ -26,6 +26,12 @@
   <div class="card">
     <h2>Caderno</h2>
     <p class="mut" style="margin-top:0">{{ c.questoes|selectattr('ok')|list|length }} de {{ c.total }} questões reconstruídas do PDF.</p>
+    {% if ia_on and c.pdf_questoes %}
+    <form method="post" action="{{ url_for('caderno_ia', cid=c.id) }}" style="margin-top:6px">
+      <button class="btn azul mini">{{ 'Procurar o gabarito no PDF com IA' if not c.gabarito else 'Ler este caderno com IA' }}</button>
+    </form>
+    <p class="hint">A IA só transcreve o gabarito que estiver escrito no PDF; ela não resolve as questões.</p>
+    {% endif %}
     <form method="post" action="{{ url_for('caderno_excluir', cid=c.id) }}" style="margin-top:14px"
           onsubmit="return confirm('Excluir o caderno e todas as tentativas dele?')">
       <button class="btn vermelho mini">Excluir caderno</button>

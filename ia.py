@@ -35,8 +35,14 @@ Regras:
 - "figura": se a questão tiver imagem, gráfico, tabela ou esquema necessário para respondê-la, descreva-o objetivamente (tabelas: transcreva em linhas de texto); senão "".
 - IGNORE gabaritos, folhas de resposta, comentários, resoluções, marcações de alternativa correta, cabeçalhos/rodapés de site e propagandas. NUNCA indique qual alternativa é a correta.
 
+{extra_gabarito}
 Responda SOMENTE com JSON válido, sem texto antes ou depois, no formato:
-{{"questoes": [{{"numero": 1, "fonte": "", "apoio": "", "enunciado": "", "alternativas": {{"A": "", "B": "", "C": "", "D": "", "E": ""}}, "figura": ""}}]}}"""
+{{"questoes": [{{"numero": 1, "fonte": "", "apoio": "", "enunciado": "", "alternativas": {{"A": "", "B": "", "C": "", "D": "", "E": ""}}, "figura": ""}}]{campo_gabarito}}}"""
+
+EXTRA_GABARITO = """
+GABARITO: este caderno chegou sem gabarito identificado. Se as páginas (principais ou de contexto) trouxerem o GABARITO OFICIAL escrito — uma tabela/lista de respostas, ou "Gabarito: B" / "Resposta: letra C" depois de cada questão —, transcreva-o no campo "gabarito" como objeto {"número": "letra"}, exatamente como está escrito (use "X" para questão anulada). Inclua TODAS as respostas que aparecerem nessas páginas, inclusive de questões que começam em outras páginas.
+NUNCA resolva as questões nem deduza respostas. Se o gabarito não estiver escrito nas páginas, use "gabarito": {}.
+"""
 
 
 def disponivel():
@@ -69,8 +75,9 @@ def _limpa(s):
     return re.sub(r"[ \t]+", " ", str(s or "")).strip()
 
 
-def extrair(pdf_bytes, progresso=None):
-    """Retorna {numero: {"fonte","apoio","enunciado","alternativas","ok"}} lendo o PDF com o Claude."""
+def extrair(pdf_bytes, progresso=None, com_gabarito=False):
+    """Retorna {numero: {"fonte","apoio","enunciado","alternativas","ok"}} lendo o PDF com o Claude.
+    Com com_gabarito=True, retorna (questoes, gabarito) — o gabarito só é transcrito se estiver escrito no PDF."""
     import anthropic
 
     cliente = anthropic.Anthropic(max_retries=3, timeout=600)
@@ -78,7 +85,7 @@ def extrair(pdf_bytes, progresso=None):
     n_pag = len(reader.pages)
     passo = max(1, int(os.environ.get("IA_PAGINAS_POR_PARTE", "6")))
     partes = list(range(0, n_pag, passo))
-    resultado = {}
+    resultado, gabarito = {}, {}
     for k, ini in enumerate(partes):
         if progresso:
             progresso(k + 1, len(partes))
@@ -93,7 +100,9 @@ def extrair(pdf_bytes, progresso=None):
             ctx.append(f"a página {len(idxs)} é contexto (página seguinte)")
         contexto = (" " + "; ".join(ctx) + ".") if ctx else ""
         dados = base64.standard_b64encode(_pdf_paginas(reader, idxs)).decode()
-        prompt = PROMPT.format(total=len(idxs), ini=p_ini, fim=p_fim, contexto=contexto)
+        prompt = PROMPT.format(total=len(idxs), ini=p_ini, fim=p_fim, contexto=contexto,
+                               extra_gabarito=EXTRA_GABARITO if com_gabarito else "",
+                               campo_gabarito=', "gabarito": {}' if com_gabarito else "")
         with cliente.messages.stream(
             model=modelo(), max_tokens=32000,
             messages=[{"role": "user", "content": [
@@ -104,9 +113,20 @@ def extrair(pdf_bytes, progresso=None):
             msg = stream.get_final_message()
         texto = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
         try:
-            lista = _json(texto).get("questoes", [])
+            dados_json = _json(texto)
         except Exception:
-            lista = []
+            dados_json = {}
+        lista = dados_json.get("questoes", []) or []
+        if com_gabarito:
+            for num, letra in (dados_json.get("gabarito") or {}).items():
+                try:
+                    num = int(str(num).strip())
+                except ValueError:
+                    continue
+                letra = str(letra or "").strip().upper()
+                letra = "X" if letra.startswith("ANUL") else letra[:1]
+                if letra in ("A", "B", "C", "D", "E", "X") and 1 <= num <= 300:
+                    gabarito.setdefault(num, letra)
         for q in lista:
             try:
                 n = int(q.get("numero"))
@@ -125,4 +145,6 @@ def extrair(pdf_bytes, progresso=None):
             if antigo is None or (novo["ok"] and not antigo["ok"]) or (
                     novo["ok"] == antigo["ok"] and len(novo["enunciado"]) + len(novo["apoio"]) > len(antigo["enunciado"]) + len(antigo["apoio"])):
                 resultado[n] = novo
+    if com_gabarito:
+        return resultado, dict(sorted(gabarito.items()))
     return resultado
