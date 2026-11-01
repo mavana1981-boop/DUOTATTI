@@ -17,6 +17,7 @@ RX_URL = re.compile(r"(?i)^\s*(https?://|www\.)\S+\s*$")
 
 def limpar_paginas(paginas):
     """Remove cabeçalhos/rodapés repetidos e numeração de página."""
+    paginas = [re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", p or "") for p in paginas]
     linhas_pag = [[l.rstrip() for l in (p or "").split("\n")] for p in paginas]
     if len(linhas_pag) >= 3:
         cont = Counter()
@@ -38,7 +39,7 @@ def limpar_paginas(paginas):
 
 
 def normalizar(t):
-    t = (t or "").replace("\r", "\n").replace("­", "").replace("\xa0", " ")
+    t = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", (t or "")).replace("\r", "\n").replace("­", "").replace("\xa0", " ")
     t = re.sub(r"(\w)-\n(\w)", r"\1\2", t)        # hifenização no fim da linha
     t = re.sub(r"[ \t]*\n[ \t]*", "\n", t)
     t = re.sub(r"\n{3,}", "\n\n", t)

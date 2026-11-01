@@ -283,7 +283,7 @@ class ErroApp(db.Model):
 
 class Config(db.Model):
     chave = db.Column(db.String(50), primary_key=True)
-    valor = db.Column(db.String(200))
+    valor = db.Column(db.Text)  # texto livre (ex.: chave das notificações, ~240 caracteres)
 
 
 DEFAULTS = {
@@ -351,6 +351,12 @@ def migrar(conn):
     for tabela, coluna, tipo in NOVAS_COLUNAS:
         if coluna not in {c["name"] for c in insp.get_columns(tabela)}:
             conn.exec_driver_sql(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
+    # colunas que precisaram crescer (Postgres respeita o tamanho; SQLite não)
+    if conn.dialect.name == "postgresql":
+        for tabela, coluna in (("config", "valor"),):
+            tipo = next((str(c["type"]) for c in insp.get_columns(tabela) if c["name"] == coluna), "")
+            if tipo.upper().startswith("VARCHAR"):
+                conn.exec_driver_sql(f"ALTER TABLE {tabela} ALTER COLUMN {coluna} TYPE TEXT")
 
 
 def definir_topico_caderno(c, topico_id=None, novo=None):
@@ -1585,7 +1591,7 @@ def aula_nova(mid):
         data, nome = _ler_upload(f)
         if not data:
             continue
-        t = nome_padrao(nome)
+        t = sem_nulos(nome_padrao(nome))
         db.session.add(Aula(materia_id=m.id, titulo=t[:200], arquivo_nome=nome[:200], topicos=list(vinc),
                             pdf=data, paginas=contar_paginas(data), tamanho=len(data), ordem=prox))
         prox += 1
@@ -1693,6 +1699,14 @@ def aula_excluir(aid):
 
 
 # ---- Questões ------------------------------------------------------------- #
+RX_CONTROLE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def sem_nulos(t):
+    """Remove caracteres de controle (ex.: \\x00) que alguns PDFs trazem e o Postgres recusa."""
+    return RX_CONTROLE.sub("", str(t or ""))
+
+
 def montar_questoes(c, extra=None):
     """(Re)constrói as questões do caderno a partir do PDF. Retorna quantas ficaram completas."""
     Questao.query.filter_by(caderno_id=c.id).delete()
@@ -1721,9 +1735,10 @@ def montar_questoes(c, extra=None):
         if n in gab and (q["ok"] or not res.get(n, {}).get("ok")):
             res[n] = q
     for n, q in res.items():
-        db.session.add(Questao(caderno_id=c.id, numero=n, fonte=(q["fonte"] or "")[:300], apoio=q["apoio"],
-                               enunciado=q["enunciado"], alternativas_json=json.dumps(q["alternativas"], ensure_ascii=False),
-                               ok=q["ok"]))
+        alts = {k: sem_nulos(v) for k, v in (q.get("alternativas") or {}).items()}
+        db.session.add(Questao(caderno_id=c.id, numero=n, fonte=sem_nulos(q.get("fonte"))[:300], apoio=sem_nulos(q.get("apoio")),
+                               enunciado=sem_nulos(q.get("enunciado")), alternativas_json=json.dumps(alts, ensure_ascii=False),
+                               ok=q.get("ok", False)))
     db.session.commit()
     return sum(1 for q in res.values() if q["ok"])
 
@@ -1837,7 +1852,7 @@ def caderno_novo(mid):
     if not gab:
         gab = parse_gabarito_texto(extrair_texto(dq), exigir_secao=True)
 
-    titulo = request.form.get("titulo", "").strip() or os.path.splitext(nome)[0]
+    titulo = sem_nulos(request.form.get("titulo", "").strip() or os.path.splitext(nome)[0])
     c = Caderno(materia_id=m.id, titulo=titulo[:200], arquivo_nome=nome[:200], pdf_questoes=dq,
                 pdf_gabarito=dg, tem_pdf_gabarito=bool(dg))
     c.gabarito = gab
