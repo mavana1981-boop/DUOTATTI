@@ -12,12 +12,12 @@ import time as _time
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from flask import (Flask, abort, flash, g, jsonify, redirect, render_template, request,
-                   send_file, session, url_for)
+from flask import (Flask, abort, flash, g, has_app_context, has_request_context, jsonify, redirect,
+                   render_template, request, send_file, session, url_for)
 from flask_sqlalchemy import SQLAlchemy
 from jinja2 import ChoiceLoader, FileSystemLoader
 from pypdf import PdfReader
-from sqlalchemy import event as sa_event, or_, select
+from sqlalchemy import event as sa_event, inspect as sa_inspect, or_, select, text as sa_text
 from sqlalchemy.orm import Session as SASession, deferred, with_loader_criteria
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -216,8 +216,12 @@ class Usuario(db.Model):
 
 
 class MetaDia(db.Model):
-    """Foto do plano de cada dia (o que foi planejado), para histórico e remarcação."""
-    data = db.Column(db.Date, primary_key=True)
+    """Foto do plano de cada dia (o que foi planejado), para histórico e remarcação — uma por usuário."""
+    __tablename__ = "meta_dia_usuario"
+    __table_args__ = (db.UniqueConstraint("usuario", "data", name="uq_meta_dia_usuario"),)
+    id = db.Column(db.Integer, primary_key=True)
+    usuario = db.Column(db.String(60), index=True)
+    data = db.Column(db.Date, nullable=False, index=True)
     meta_leituras = db.Column(db.Integer, default=0)
     planejadas_json = db.Column(db.Text, default="[]")   # ids das aulas planejadas
     meta_questoes = db.Column(db.Integer, default=60)
@@ -273,11 +277,44 @@ def _sq_admins():
     return select(Usuario.login).where(Usuario.admin.is_(True)).scalar_subquery()
 
 
+USUARIO_PRINCIPAL = "renata"   # dona dos registros antigos (de antes dos logins)
+
+
+def escopo():
+    """Login cujos dados (leituras, baterias, metas, ofensiva, configurações) estão sendo vistos.
+    Aluno: ele mesmo. Admin: o aluno escolhido em "ver como" (padrão: a Renata). Fora de requisição: None."""
+    if not has_app_context():
+        return None
+    if "escopo" in g:
+        return g.escopo
+    if not has_request_context() or g.get("_calc_escopo"):
+        return None
+    g._calc_escopo = True
+    try:
+        u = usuario_atual()
+        val = None if u is None else ((session.get("ver_como") or USUARIO_PRINCIPAL) if u.admin else u.login)
+    finally:
+        g._calc_escopo = False
+    if u is not None:
+        g.escopo = val
+    return val
+
+
 @sa_event.listens_for(SASession, "do_orm_execute")
 def _ignorar_admin(state):
-    """Leituras e baterias feitas pelo admin são testes: ficam fora de metas, humor, XP, calendário etc.
-    Use execution_options(todos=True) para enxergá-las (ex.: a própria bateria do admin)."""
-    if state.is_select and not state.execution_options.get("todos", False):
+    """Cada aluno só enxerga as próprias leituras, baterias e fotos de meta.
+    Leituras e baterias feitas pelo admin são testes: ficam fora de metas, humor, XP, calendário etc.
+    execution_options(todos=True) enxerga tudo; todos_usuarios=True enxerga todos os alunos (sem o admin)."""
+    if not state.is_select or state.execution_options.get("todos", False):
+        return
+    esc = None if state.execution_options.get("todos_usuarios", False) else escopo()
+    if esc:
+        state.statement = state.statement.options(
+            with_loader_criteria(Leitura, lambda c: c.usuario == esc, include_aliases=True),
+            with_loader_criteria(Tentativa, lambda c: c.usuario == esc, include_aliases=True),
+            with_loader_criteria(MetaDia, lambda c: c.usuario == esc, include_aliases=True),
+        )
+    else:
         state.statement = state.statement.options(
             with_loader_criteria(Leitura, lambda c: or_(c.usuario.is_(None), c.usuario.notin_(_sq_admins())),
                                  include_aliases=True),
@@ -290,6 +327,8 @@ def eh_admin():
     u = usuario_atual() if request else None
     return bool(u and u.admin)
 
+
+CHAVES_USUARIO = None  # definido após DEFAULTS
 
 USUARIOS_INICIAIS = [("admin", "Administrador", "admin", True), ("renata", "Renata", "tatti", False),
                      ("james", "James", "james123", False)]
@@ -322,11 +361,39 @@ DEFAULTS = {
 }
 
 
+CHAVES_USUARIO = set(DEFAULTS) | {"ordem_evolucao", "tutorial_visto"}  # cada aluno tem as suas
+
+
+def chave_cfg(k, login=None):
+    """Nome da chave no banco: as configurações do aluno ficam como 'login:chave'."""
+    login = login or escopo()
+    return f"{login}:{k}" if login and k in CHAVES_USUARIO else k
+
+
 def configs():
     cfg = dict(DEFAULTS)
-    for c in Config.query.all():
-        cfg[c.chave] = c.valor
+    esc = escopo()
+    linhas = Config.query.all()
+    if not esc:
+        for c in linhas:
+            cfg[c.chave] = c.valor
+        return cfg
+    u = Usuario.query.filter_by(login=esc).first()
+    if u and u.nome:
+        cfg["nome"] = u.nome
+    pref = esc + ":"
+    for c in linhas:
+        if c.chave.startswith(pref):
+            cfg[c.chave[len(pref):]] = c.valor
+        elif ":" not in c.chave and c.chave not in CHAVES_USUARIO:
+            cfg[c.chave] = c.valor   # chaves globais (ex.: notificações)
     return cfg
+
+
+def salvar_cfg(k, v):
+    c = db.session.get(Config, chave_cfg(k)) or Config(chave=chave_cfg(k))
+    c.valor = v
+    db.session.add(c)
 
 
 def cfg_num(cfg, chave):
@@ -546,6 +613,25 @@ def limpar_registros_admin():
         db.session.commit()
 
 
+def separar_por_usuario():
+    """Antes havia um só aluno: leituras/baterias sem dono, metas do dia e configurações viram da Renata."""
+    if not Usuario.query.filter_by(login=USUARIO_PRINCIPAL).first():
+        return
+    Leitura.query.filter(Leitura.usuario.is_(None)).update({"usuario": USUARIO_PRINCIPAL}, synchronize_session=False)
+    Tentativa.query.filter(Tentativa.usuario.is_(None)).update({"usuario": USUARIO_PRINCIPAL}, synchronize_session=False)
+    existentes = {c.chave for c in Config.query.all()}
+    for c in Config.query.filter(Config.chave.in_(CHAVES_USUARIO)).all():
+        nova = chave_cfg(c.chave, USUARIO_PRINCIPAL)
+        if nova not in existentes:
+            db.session.add(Config(chave=nova, valor=c.valor))
+    db.session.commit()
+    if sa_inspect(db.engine).has_table("meta_dia") and not MetaDia.query.execution_options(todos=True).first():
+        cols = "data, meta_leituras, planejadas_json, meta_questoes, item_bateria, restante_inicio, criado_em"
+        db.session.execute(sa_text(f"INSERT INTO meta_dia_usuario (usuario, {cols}) SELECT :u, {cols} FROM meta_dia"),
+                           {"u": USUARIO_PRINCIPAL})
+        db.session.commit()
+
+
 def _preparar_banco():
     if db.engine.dialect.name == "postgresql":
         with db.engine.begin() as conn:
@@ -557,6 +643,7 @@ def _preparar_banco():
             migrar(conn)
     seed()
     criar_usuarios()
+    separar_por_usuario()
     limpar_registros_admin()
     migrar_vinculos_aulas()
     atualizar_topicos_edital()
@@ -877,10 +964,10 @@ def plano_do_dia():
             planejadas.add(a.materia_id)
 
     # foto do plano do dia (uma vez por dia)
-    if fase == "leitura" and aulas and not db.session.get(MetaDia, h):
+    if fase == "leitura" and aulas and escopo() and not MetaDia.query.filter_by(data=h).first():
         try:
             lidas_hoje = [a.id for a in aulas if est[a.id]["hoje"]]
-            db.session.add(MetaDia(data=h, meta_leituras=meta_hoje, restante_inicio=restante_inicio,
+            db.session.add(MetaDia(usuario=escopo(), data=h, meta_leituras=meta_hoje, restante_inicio=restante_inicio,
                                    planejadas_json=json.dumps(lidas_hoje + [f["aula"].id for f in fila]),
                                    meta_questoes=max(QUESTOES_MINIMO, int(cfg_num(cfg, "meta_questoes_dia")))))
             db.session.commit()
@@ -1278,15 +1365,21 @@ def verificar_lembretes():
     pend = [i for i in PushInscricao.query.all() if (i.horario or "19:00") <= hhmm and i.ultimo_envio != d]
     if not pend:
         return
-    msg = mensagem_do_dia()
     for i in pend:
         # marca como enviado de forma atômica (evita duplicar com dois workers)
         n = (PushInscricao.query.filter(PushInscricao.id == i.id,
                                         (PushInscricao.ultimo_envio.is_(None)) | (PushInscricao.ultimo_envio != d))
              .update({"ultimo_envio": d}, synchronize_session=False))
         db.session.commit()
-        if n and msg:
+        if not n:
+            continue
+        u = db.session.get(Usuario, i.usuario_id) if i.usuario_id else None
+        g.escopo = u.login if u and not u.admin else USUARIO_PRINCIPAL
+        db.session.expire_all()
+        msg = mensagem_do_dia()
+        if msg:
             enviar_push(i, msg)
+    g.pop("escopo", None)
 
 
 _lembretes = {"t": None}
@@ -1481,7 +1574,18 @@ def so_admin(f):
 
 @app.context_processor
 def contexto_usuario():
-    return {"usuario": usuario_atual() if request.endpoint not in ("static",) else None}
+    u = usuario_atual() if request.endpoint not in ("static",) else None
+    alunos = Usuario.query.filter(Usuario.admin.isnot(True)).order_by(Usuario.login).all() if u and u.admin else []
+    return {"usuario": u, "alunos": alunos, "vendo": escopo() if u else None}
+
+
+@app.post("/ver-como")
+@so_admin
+def ver_como():
+    login_ = (request.form.get("login") or "").strip().lower()
+    if Usuario.query.filter(Usuario.login == login_, Usuario.admin.isnot(True)).first():
+        session["ver_como"] = login_
+    return redirect(request.referrer or url_for("index"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -1541,7 +1645,7 @@ def logs():
             ate = hoje()
         ini, fim = dt0(de), dt0(ate + timedelta(days=1))
         qs = SessaoPdf.query.filter(SessaoPdf.inicio >= ini, SessaoPdf.inicio < fim)
-        ql = Leitura.query.filter(Leitura.lida_em >= ini, Leitura.lida_em < fim)
+        ql = Leitura.query.execution_options(todos_usuarios=True).filter(Leitura.lida_em >= ini, Leitura.lida_em < fim)
         qa = LogAcesso.query.filter(LogAcesso.evento == "acao", LogAcesso.quando >= ini, LogAcesso.quando < fim)
         if f_usuario:
             qs, ql, qa = qs.filter_by(usuario=f_usuario), ql.filter_by(usuario=f_usuario), qa.filter_by(usuario=f_usuario)
@@ -1749,6 +1853,8 @@ def aula_excluir(aid):
     a = db.get_or_404(Aula, aid)
     mid = a.materia_id
     acao(f"Excluiu a aula: {a.titulo} ({a.materia.nome})")
+    Leitura.query.filter_by(aula_id=a.id).delete(synchronize_session=False)
+    db.session.expire(a, ["leituras"])
     db.session.delete(a)
     db.session.commit()
     flash("Aula excluída.", "info")
@@ -2158,6 +2264,8 @@ def caderno_excluir(cid):
     c = db.get_or_404(Caderno, cid)
     mid = c.materia_id
     acao(f"Apagou caderno: {c.titulo} ({c.materia.nome})")
+    Tentativa.query.filter_by(caderno_id=c.id).delete(synchronize_session=False)
+    db.session.expire(c, ["tentativas"])
     db.session.delete(c)
     db.session.commit()
     flash("Caderno excluído.", "info")
@@ -2264,18 +2372,14 @@ def api_ordem_cards():
     ordem = [c for c in ordem if c in CARDS_EVOLUCAO]
     if sorted(set(ordem)) != sorted(CARDS_EVOLUCAO):
         return jsonify(ok=False), 400
-    c = db.session.get(Config, "ordem_evolucao") or Config(chave="ordem_evolucao")
-    c.valor = ",".join(ordem)
-    db.session.add(c)
+    salvar_cfg("ordem_evolucao", ",".join(ordem))
     db.session.commit()
     return jsonify(ok=True)
 
 
 @app.post("/api/tutorial-visto")
 def api_tutorial_visto():
-    c = db.session.get(Config, "tutorial_visto") or Config(chave="tutorial_visto")
-    c.valor = "1"
-    db.session.add(c)
+    salvar_cfg("tutorial_visto", "1")
     db.session.commit()
     return jsonify(ok=True)
 
@@ -2344,7 +2448,7 @@ def resumo_de_dia(d, cfg=None, aulas=None, leituras=None, tents=None):
     aulas = aulas if aulas is not None else Aula.query.all()
     leituras = leituras if leituras is not None else Leitura.query.all()
     tents = tents if tents is not None else Tentativa.query.all()
-    snap = db.session.get(MetaDia, d)
+    snap = MetaDia.query.filter_by(data=d).first()
     do_dia = [l for l in leituras if ini <= l.lida_em < fim]
     if snap:
         meta, estimada = snap.meta_leituras, False
@@ -2397,7 +2501,8 @@ def metas_dias():
             no_dia = any(ini_sel <= l.lida_em < fim_sel for l in a.leituras)
             depois = [l.lida_em for l in a.leituras if l.lida_em >= fim_sel]
             planejadas.append({"aula": a, "no_dia": no_dia, "depois": min(depois) if depois else None})
-    sess = SessaoPdf.query.filter(SessaoPdf.inicio >= dt0(sel), SessaoPdf.inicio < dt0(sel + timedelta(days=1))).all()
+    sess = SessaoPdf.query.filter(SessaoPdf.usuario == escopo(), SessaoPdf.inicio >= dt0(sel),
+                                  SessaoPdf.inicio < dt0(sel + timedelta(days=1))).all()
     return render_template("metas_dias.html", lista=lista, det=det, sel=sel, planejadas=planejadas, timedelta1=timedelta(days=1),
                            tempo_dia=sum(x.segundos or 0 for x in sess), hoje_d=h, primeira=primeira)
 
@@ -2420,9 +2525,11 @@ def metas():
                     v = str(max(QUESTOES_MINIMO if k == "meta_questoes_dia" else 0, min(1000, int(float(v)))))
                 except ValueError:
                     continue
-            c = db.session.get(Config, k) or Config(chave=k)
-            c.valor = v[:200]
-            db.session.add(c)
+            if k == "nome":
+                u = Usuario.query.filter_by(login=escopo()).first()
+                if u:
+                    u.nome = v[:100]
+            salvar_cfg(k, v[:200])
         db.session.commit()
         flash("Metas salvas. A Tatti já está de olho!", "ok")
         return redirect(url_for("metas"))

@@ -119,6 +119,10 @@ th{color:var(--mut);font-weight:800;font-size:.8rem;text-transform:uppercase}
     {% if usuario and usuario.admin %}<a href="{{ url_for('logs') }}" class="{{ 'on' if ep=='logs' }}">Logs</a>{% endif %}
   </nav>{% endif %}
   <div class="chips">
+    {% if alunos %}<form method="post" action="{{ url_for('ver_como') }}" class="chip" title="Ver os dados de qual aluno">
+      <select name="login" onchange="this.form.submit()" aria-label="Ver como" style="border:0;background:transparent;font:inherit;color:inherit">
+        {% for a in alunos %}<option value="{{ a.login }}" {{ 'selected' if a.login == vendo }}>👁 {{ a.nome or a.login }}</option>{% endfor %}
+      </select></form>{% endif %}
     {% if usuario %}<span class="chip quem" title="Conectado como {{ usuario.login }}"><span class="quem-nome">{{ usuario.nome or usuario.login }}</span>
       <a href="{{ url_for('logout') }}" class="sair" aria-label="Sair">Sair</a></span>{% endif %}
     {% if dias_prova is not none %}<span class="chip" title="Dias para a prova">
