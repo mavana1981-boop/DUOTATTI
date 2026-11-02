@@ -291,7 +291,8 @@ def eh_admin():
     return bool(u and u.admin)
 
 
-USUARIOS_INICIAIS = [("admin", "Administrador", "admin", True), ("renata", "Renata", "tatti", False)]
+USUARIOS_INICIAIS = [("admin", "Administrador", "admin", True), ("renata", "Renata", "tatti", False),
+                     ("james", "James", "james123", False)]
 
 
 class ErroApp(db.Model):
