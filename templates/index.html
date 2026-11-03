@@ -146,6 +146,11 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
   {% elif not p.meta_hoje %}
   <p style="font-weight:800;color:var(--ok)">Todas as aulas já foram lidas {{ p.alvo }}x. Agora é manter a revisão com questões.</p>
   {% endif %}
+  {% if ajuste and ajuste.opcoes %}
+  <div class="row" style="justify-content:flex-end;margin-top:8px">
+    <button type="button" class="btn mini azul" onclick="document.getElementById('dlg-incluir').showModal()">+ Incluir aula</button>
+  </div>
+  {% endif %}
   {% endif %}
 
   {% if ajuste and (ajuste.hoje or ajuste.adiadas) %}
@@ -154,6 +159,7 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
     <ul>
       {% for aj in ajuste.hoje %}{% set a = ajuste.por_id.get(aj.aula_id) %}{% if a %}
       <li><span>{% if aj.tipo == 'exclusao' %}✕ <b>{{ a.titulo }}</b> <span class="mut">excluída da meta de hoje</span>
+        {% elif aj.tipo == 'inclusao' %}+ <b>{{ a.titulo }}</b> <span class="mut">incluída na meta de hoje</span>
         {% else %}⇄ <b>{{ a.titulo }}</b> <span class="mut">trocada{% if aj.substituta_id and ajuste.por_id.get(aj.substituta_id) %} por {{ ajuste.por_id[aj.substituta_id].titulo }}{% endif %} · volta em {{ aj.volta_em.strftime('%d/%m') }}</span>{% endif %}</span>
         <form method="post" action="{{ url_for('meta_ajuste') }}"><input type="hidden" name="acao" value="desfazer"><input type="hidden" name="ajuste_id" value="{{ aj.id }}"><button class="btn mini claro">Desfazer</button></form></li>
       {% endif %}{% endfor %}
@@ -185,6 +191,28 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
       </div>
     </form>
   </dialog>
+  {% if ajuste.opcoes %}
+  <dialog class="troca" id="dlg-incluir">
+    <form method="post" action="{{ url_for('meta_ajuste') }}">
+      <h3 style="margin:0 0 4px">Incluir aula</h3>
+      <p class="hint" style="margin:6px 0 0">A aula entra na meta de hoje e a meta aumenta uma leitura.</p>
+      <input type="hidden" name="acao" value="incluir">
+      <label style="font-weight:800;display:block;margin-top:10px">Aula:</label>
+      <select name="aula_id" required>
+        <option value="">Escolha a aula…</option>
+        {% for m in ajuste.opcoes|groupby('materia_id') %}
+        <optgroup label="{{ m.list[0].materia.nome }}">
+          {% for a in m.list %}<option value="{{ a.id }}">{{ a.titulo }}</option>{% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+      <div class="row" style="gap:8px;justify-content:flex-end">
+        <button type="button" class="btn claro mini" onclick="this.closest('dialog').close()">Cancelar</button>
+        <button class="btn azul mini">Incluir</button>
+      </div>
+    </form>
+  </dialog>
+  {% endif %}
   <script>
   document.querySelectorAll('[data-trocar]').forEach(b => b.addEventListener('click', () => {
     const d = document.getElementById('dlg-troca');
