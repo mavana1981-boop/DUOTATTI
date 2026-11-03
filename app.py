@@ -950,7 +950,7 @@ def plano_do_dia():
         for aj in AjusteMeta.query.filter(AjusteMeta.usuario == esc, AjusteMeta.tipo == "troca",
                                           AjusteMeta.aula_id.in_(list(voltas))).all():
             voltas_de[aj.aula_id] = aj.data
-    incluidas = [i for i in incluidas if i not in excluidas and i not in adiadas and est[i]["n_antes"] < alvo]
+    incluidas = [i for i in incluidas if i not in excluidas and est[i]["n_antes"] < alvo]
     if fase == "leitura" and excluidas:
         meta_hoje = max(0, meta_hoje - len(excluidas))
     if fase == "leitura" and incluidas:
@@ -995,12 +995,15 @@ def plano_do_dia():
         planejadas = set()
         escolhidas = [(i, "incluída pelo administrador") for i in incluidas] + \
                      [(i, "escolhida no lugar de uma aula trocada") for i in substitutas]
+        ja = set()
         for sid, mot in escolhidas:  # escolhidas pelo admin (incluídas ou no lugar de uma aula trocada)
-            a = next((x for x in cands if x.id == sid), None)
-            if not a:
+            a = por_id.get(sid)  # pode ser até uma aula trocada antes ("fora da meta"): o admin a trouxe de volta hoje
+            if not a or sid in ja or est[sid]["n"] >= alvo or est[sid]["hoje"]:
                 continue
+            ja.add(sid)
             fila.append({"aula": a, "vez": est[a.id]["n"] + 1, "motivo": mot, "urgente": False})
-            cands.remove(a)
+            if a in cands:
+                cands.remove(a)
             marca += timedelta(seconds=1)
             ultima_mat[a.materia_id] = marca
             planejadas.add(a.materia_id)
@@ -1793,9 +1796,26 @@ def index():
         p = hm.get("dia", {}).get("plano") if isinstance(hm.get("dia"), dict) else None
         if p and p["fase"] == "leitura":
             na_fila = {f["aula"].id for f in p["fila"]}
-            opcoes = [a for m in materias for a in sorted(m.aulas, key=lambda x: (x.ordem or 0, x.id))
-                      if a.id not in na_fila and a.id not in p["adiadas"] and a.id not in p["excluidas"]
-                      and p["est"].get(a.id, {}).get("n", 0) < p["alvo"] and not p["est"].get(a.id, {}).get("hoje")]
+
+            def aviso(a):
+                st = p["est"].get(a.id, {})
+                if a.id in na_fila:
+                    return "já está na meta"
+                if st.get("hoje"):
+                    return "lida hoje"
+                if st.get("n", 0) >= p["alvo"]:
+                    return f"já lida {p['alvo']}x"
+                if a.id in p["adiadas"]:
+                    return f"trocada · voltaria em {p['adiadas'][a.id].strftime('%d/%m')}"
+                if a.id in p["excluidas"]:
+                    return "excluída hoje"
+                return ""
+            bloqueia = ("já está na meta", "lida hoje", f"já lida {p['alvo']}x")
+            opcoes = []
+            for m in materias:
+                for a in sorted(m.aulas, key=lambda x: (x.ordem or 0, x.id)):
+                    av = aviso(a)
+                    opcoes.append({"aula": a, "materia_id": m.id, "aviso": av, "ok": av not in bloqueia})
             por_id = {a.id: a for m in materias for a in m.aulas}
             ajuste = {"opcoes": opcoes, "por_id": por_id,
                       "hoje": [aj for aj in p["ajustes_hoje"]],

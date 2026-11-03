@@ -146,7 +146,7 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
   {% elif not p.meta_hoje %}
   <p style="font-weight:800;color:var(--ok)">Todas as aulas já foram lidas {{ p.alvo }}x. Agora é manter a revisão com questões.</p>
   {% endif %}
-  {% if ajuste and ajuste.opcoes %}
+  {% if ajuste and ajuste.opcoes|selectattr('ok')|list %}
   <div class="row" style="justify-content:flex-end;margin-top:8px">
     <button type="button" class="btn mini azul" onclick="document.getElementById('dlg-incluir').showModal()">+ Incluir aula</button>
   </div>
@@ -180,8 +180,8 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
       <select name="substituta_id">
         <option value="">Escolha automática (próxima do rodízio)</option>
         {% for m in ajuste.opcoes|groupby('materia_id') %}
-        <optgroup label="{{ m.list[0].materia.nome }}">
-          {% for a in m.list %}<option value="{{ a.id }}">{{ a.titulo }}</option>{% endfor %}
+        <optgroup label="{{ m.list[0].aula.materia.nome }}">
+          {% for o in m.list %}<option value="{{ o.aula.id }}"{{ ' disabled' if not o.ok }}>{{ o.aula.titulo }}{{ ' — ' ~ o.aviso if o.aviso }}</option>{% endfor %}
         </optgroup>
         {% endfor %}
       </select>
@@ -191,7 +191,7 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
       </div>
     </form>
   </dialog>
-  {% if ajuste.opcoes %}
+  {% if ajuste.opcoes|selectattr('ok')|list %}
   <dialog class="troca" id="dlg-incluir">
     <form method="post" action="{{ url_for('meta_ajuste') }}">
       <h3 style="margin:0 0 4px">Incluir aula</h3>
@@ -201,8 +201,8 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
       <select name="aula_id" required>
         <option value="">Escolha a aula…</option>
         {% for m in ajuste.opcoes|groupby('materia_id') %}
-        <optgroup label="{{ m.list[0].materia.nome }}">
-          {% for a in m.list %}<option value="{{ a.id }}">{{ a.titulo }}</option>{% endfor %}
+        <optgroup label="{{ m.list[0].aula.materia.nome }}">
+          {% for o in m.list %}<option value="{{ o.aula.id }}"{{ ' disabled' if not o.ok }}>{{ o.aula.titulo }}{{ ' — ' ~ o.aviso if o.aviso }}</option>{% endfor %}
         </optgroup>
         {% endfor %}
       </select>
