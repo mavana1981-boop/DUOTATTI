@@ -237,6 +237,23 @@ class MetaDia(db.Model):
             return []
 
 
+class AjusteMeta(db.Model):
+    """Ajuste feito pelo admin na meta do dia de um aluno.
+    troca: a aula sai da meta e volta sozinha em ~10 dias (volta_em); substituta_id = aula escolhida no lugar (ou automática).
+    exclusao: a aula sai da meta só naquele dia e a meta do dia diminui uma leitura."""
+    id = db.Column(db.Integer, primary_key=True)
+    usuario = db.Column(db.String(60), index=True)
+    aula_id = db.Column(db.Integer, index=True, nullable=False)
+    tipo = db.Column(db.String(10), nullable=False)       # troca | exclusao
+    data = db.Column(db.Date, nullable=False, index=True)
+    volta_em = db.Column(db.Date)
+    substituta_id = db.Column(db.Integer)
+    criado_em = db.Column(db.DateTime, default=agora)
+
+
+DIAS_TROCA = 10   # aula trocada volta à meta do dia depois de ~10 dias
+
+
 class SessaoPdf(db.Model):
     """Tempo com uma aula aberta (só conta enquanto a tela está visível)."""
     id = db.Column(db.Integer, primary_key=True)
@@ -898,11 +915,44 @@ def plano_do_dia():
     fase = "leitura" if dias > 0 else "questoes"
     meta_hoje = math.ceil(restante_inicio / dias) if fase == "leitura" and restante_inicio else 0
 
+    # ajustes do admin: trocas (aula sai e volta em ~10 dias) e exclusões (só hoje)
+    adiadas, voltas, excluidas, substitutas, ajustes_hoje = {}, {}, set(), [], []
+    esc = escopo()
+    if esc:
+        for aj in AjusteMeta.query.filter(AjusteMeta.usuario == esc, AjusteMeta.data >= h - timedelta(days=60)) \
+                .order_by(AjusteMeta.data, AjusteMeta.id).all():
+            if aj.aula_id not in est:
+                continue
+            if aj.data == h:
+                ajustes_hoje.append(aj)
+            if aj.tipo == "exclusao":
+                if aj.data == h:
+                    excluidas.add(aj.aula_id)
+                continue
+            if aj.data == h and aj.substituta_id in est:
+                substitutas.append(aj.substituta_id)
+            if aj.volta_em and aj.volta_em > h:
+                adiadas[aj.aula_id] = aj.volta_em
+            elif aj.volta_em:
+                u = est[aj.aula_id]["ultima"]
+                if est[aj.aula_id]["n"] < alvo and (u is None or u.date() < aj.data or est[aj.aula_id]["hoje"]):
+                    voltas[aj.aula_id] = aj.volta_em   # ainda não lida desde a troca: volta com prioridade
+        for aid in adiadas:
+            voltas.pop(aid, None)
+    voltas_de = {}
+    if esc and voltas:
+        for aj in AjusteMeta.query.filter(AjusteMeta.usuario == esc, AjusteMeta.tipo == "troca",
+                                          AjusteMeta.aula_id.in_(list(voltas))).all():
+            voltas_de[aj.aula_id] = aj.data
+    if fase == "leitura" and excluidas:
+        meta_hoje = max(0, meta_hoje - len(excluidas))
+
     def dias_sem(a):
         u = est[a.id]["ultima"]
         return (h - u.date()).days if u else None
 
-    atrasadas = [a for a in aulas if 0 < est[a.id]["n"] < alvo and dias_sem(a) is not None and dias_sem(a) > max_dias]
+    atrasadas = [a for a in aulas if 0 < est[a.id]["n"] < alvo and dias_sem(a) is not None and dias_sem(a) > max_dias
+                 and a.id not in adiadas]
     atrasadas.sort(key=lambda a: -dias_sem(a))
 
     # última vez que cada matéria foi vista
@@ -918,18 +968,32 @@ def plano_do_dia():
     for snap in MetaDia.query.filter(MetaDia.data < h, MetaDia.data >= h - timedelta(days=30)).order_by(MetaDia.data).all():
         for aid in snap.planejadas:
             a = por_id.get(aid)
-            if not a or aid in pendentes or est[aid]["n"] >= alvo:
+            if not a or aid in pendentes or est[aid]["n"] >= alvo or aid in adiadas:
                 continue
             u = est[aid]["ultima"]
             if u is None or u.date() < snap.data:
                 pendentes[aid] = snap.data
+    for aid, d in voltas.items():
+        if aid not in pendentes or d < pendentes[aid]:
+            pendentes[aid] = d
 
     fila = []
     if fase == "leitura":
-        cands = [a for a in aulas if est[a.id]["n"] < alvo and est[a.id]["hoje"] == 0]
+        cands = [a for a in aulas if est[a.id]["n"] < alvo and est[a.id]["hoje"] == 0
+                 and a.id not in adiadas and a.id not in excluidas]
         vagas = max(0, meta_hoje - feitas_hoje)
         marca = agora()
         planejadas = set()
+        for sid in substitutas:  # escolhidas pelo admin no lugar de uma aula trocada
+            a = next((x for x in cands if x.id == sid), None)
+            if not a:
+                continue
+            fila.append({"aula": a, "vez": est[a.id]["n"] + 1, "motivo": "escolhida no lugar de uma aula trocada",
+                         "urgente": False})
+            cands.remove(a)
+            marca += timedelta(seconds=1)
+            ultima_mat[a.materia_id] = marca
+            planejadas.add(a.materia_id)
         while cands:
             urgentes = [a for a in cands if est[a.id]["n"] > 0 and dias_sem(a) >= max_dias - 2]
             atrasadas_plano = [a for a in cands if a.id in pendentes]
@@ -937,7 +1001,8 @@ def plano_do_dia():
                 break  # meta cumprida; aulas perto do limite de dias entram mesmo assim
             if atrasadas_plano and len(fila) < vagas:
                 a = min(atrasadas_plano, key=lambda x: (pendentes[x.id], x.materia.ordem, x.ordem or 0))
-                motivo = f"planejada para {pendentes[a.id].strftime('%d/%m')} e não lida — remarcada"
+                motivo = (f"trocada em {voltas_de[a.id].strftime('%d/%m')} — voltou à meta" if a.id in voltas_de
+                          else f"planejada para {pendentes[a.id].strftime('%d/%m')} e não lida — remarcada")
                 urg = True
             elif urgentes:
                 a = max(urgentes, key=lambda x: (dias_sem(x), -est[x.id]["n"]))
@@ -975,7 +1040,8 @@ def plano_do_dia():
             db.session.rollback()
 
     total_necessario = alvo * len(aulas)
-    return {"alvo": alvo, "pendentes": pendentes, "limite": limite, "dias": max(dias, 0), "fase": fase, "max_dias": max_dias,
+    return {"alvo": alvo, "pendentes": pendentes, "adiadas": adiadas, "excluidas": excluidas,
+            "ajustes_hoje": ajustes_hoje, "limite": limite, "dias": max(dias, 0), "fase": fase, "max_dias": max_dias,
             "restante": restante, "meta_hoje": meta_hoje,
             "aulas_faltando": sum(1 for e in est.values() if e["n"] < alvo),
             "ritmo": (restante_inicio / dias) if fase == "leitura" and dias > 0 else 0,
@@ -1010,14 +1076,16 @@ def projecao_leituras():
         seq += 1
         ult_mat[a.materia_id] = (h, seq)
     fila_ids = {f["aula"].id for f in p["fila"]}
+    adiadas = p["adiadas"]
     remarcar = [aid for aid, _ in sorted(p["pendentes"].items(), key=lambda kv: kv[1]) if aid not in fila_ids and aid in n]
+    remarcar += [aid for aid, _ in sorted(adiadas.items(), key=lambda kv: kv[1]) if aid in n]
     d = h + timedelta(days=1)
     while d <= limite:
         restante = sum(max(0, alvo - n[i]) for i in n)
         if not restante:
             break
         meta = math.ceil(restante / ((limite - d).days + 1))
-        cands = [i for i in n if n[i] < alvo]
+        cands = [i for i in n if n[i] < alvo and not (i in adiadas and d < adiadas[i])]
         escolhidas = []
         while cands:
             urg = [i for i in cands if n[i] > 0 and ult[i] and (d - ult[i]).days >= max_dias - 2]
@@ -1709,7 +1777,20 @@ def index():
     tot_lidas = sum(s["aulas_lidas"] for _, s in trilha)
     dias_sem = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
     h0 = hoje()
-    return render_template("index.html", trilha=trilha, h=calcular_humor(), xp=xp, nv=nivel(xp),
+    hm = calcular_humor()
+    ajuste = None
+    if eh_admin():
+        p = hm.get("dia", {}).get("plano") if isinstance(hm.get("dia"), dict) else None
+        if p and p["fase"] == "leitura":
+            na_fila = {f["aula"].id for f in p["fila"]}
+            opcoes = [a for m in materias for a in sorted(m.aulas, key=lambda x: (x.ordem or 0, x.id))
+                      if a.id not in na_fila and a.id not in p["adiadas"] and a.id not in p["excluidas"]
+                      and p["est"].get(a.id, {}).get("n", 0) < p["alvo"] and not p["est"].get(a.id, {}).get("hoje")]
+            por_id = {a.id: a for m in materias for a in m.aulas}
+            ajuste = {"opcoes": opcoes, "por_id": por_id,
+                      "hoje": [aj for aj in p["ajustes_hoje"]],
+                      "adiadas": sorted(((por_id[i], d) for i, d in p["adiadas"].items() if i in por_id), key=lambda x: x[1])}
+    return render_template("index.html", trilha=trilha, h=hm, xp=xp, nv=nivel(xp), ajuste=ajuste,
                            hoje_str=f"{dias_sem[h0.weekday()]}, {h0.strftime('%d/%m')}",
                            streak=ofensiva(), tot_aulas=tot_aulas, tot_lidas=tot_lidas)
 
@@ -2472,6 +2553,58 @@ def resumo_de_dia(d, cfg=None, aulas=None, leituras=None, tents=None):
     return {"data": d, "meta": meta, "estimada": estimada, "feitas": len(do_dia), "leituras": do_dia,
             "meta_q": meta_q, "questoes": q, "acertos": ac, "baterias": tq, "snap": snap,
             "ok_l": ok_l, "ok_q": ok_q, "humor": humor}
+
+
+def _refazer_foto_do_dia():
+    """Depois de um ajuste do admin, a foto de hoje passa a refletir a nova meta (evita remarcar a aula trocada amanhã)."""
+    p = plano_do_dia()
+    snap = MetaDia.query.filter_by(data=hoje()).first()
+    if snap and p["fase"] == "leitura":
+        lidas_hoje = [aid for aid, e in p["est"].items() if e["hoje"]]
+        snap.planejadas_json = json.dumps(lidas_hoje + [f["aula"].id for f in p["fila"]])
+        snap.meta_leituras = p["meta_hoje"]
+        db.session.commit()
+
+
+@app.post("/meta/ajuste")
+@so_admin
+def meta_ajuste():
+    """Admin troca uma aula da meta do dia por outra (a trocada volta em ~10 dias), exclui uma aula da meta de hoje
+    ou desfaz um ajuste de hoje. Vale para o aluno em "ver como"."""
+    f = request.form
+    oper = f.get("acao")
+    h = hoje()
+    esc = escopo()
+    if not esc:
+        abort(400)
+    if oper == "desfazer":
+        aj = db.session.get(AjusteMeta, f.get("ajuste_id", type=int) or 0)
+        if aj and aj.usuario == esc and aj.data == h:
+            db.session.delete(aj)
+            db.session.commit()
+            flash("Ajuste desfeito.", "ok")
+    else:
+        a = db.get_or_404(Aula, f.get("aula_id", type=int) or 0)
+        if oper == "excluir":
+            db.session.add(AjusteMeta(usuario=esc, aula_id=a.id, tipo="exclusao", data=h))
+            db.session.commit()
+            flash(f"“{a.titulo}” saiu da meta de hoje (a meta diminuiu uma leitura).", "ok")
+        elif oper == "trocar":
+            sub = f.get("substituta_id", type=int)
+            sub_a = db.session.get(Aula, sub) if sub else None
+            if sub_a and sub_a.id == a.id:
+                sub_a = None
+            limite = _data_cfg(configs(), "data_limite_leituras")
+            volta = min(h + timedelta(days=DIAS_TROCA), max(limite, h + timedelta(days=1)))
+            db.session.add(AjusteMeta(usuario=esc, aula_id=a.id, tipo="troca", data=h, volta_em=volta,
+                                      substituta_id=sub_a.id if sub_a else None))
+            db.session.commit()
+            flash(f"“{a.titulo}” trocada por {('“' + sub_a.titulo + '”') if sub_a else 'uma aula escolhida automaticamente'}. "
+                  f"Ela volta à meta do dia em {volta.strftime('%d/%m')}.", "ok")
+        else:
+            abort(400)
+    _refazer_foto_do_dia()
+    return redirect(url_for("index") + "#meta")
 
 
 @app.route("/metas/dias")

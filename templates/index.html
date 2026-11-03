@@ -36,6 +36,15 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
 .fila li:last-child{border-bottom:0}
 .fila .pt{flex:none;width:28px;height:28px;border-radius:50%;background:var(--c);color:#fff;display:grid;place-items:center;font-weight:900;font-size:.8rem;counter-increment:f}
 .fila .pt:before{content:counter(f)}
+.adm-aj{display:flex;gap:6px;flex:none}
+.adm-aj form{margin:0}
+.ajustes{margin:6px 0 12px;padding:10px 12px;border:2px dashed var(--line);border-radius:14px;font-size:.85rem}
+.ajustes ul{list-style:none;margin:6px 0 0;padding:0}
+.ajustes li{display:flex;gap:8px;align-items:center;padding:4px 0}
+.ajustes li form{margin:0 0 0 auto}
+dialog.troca{border:0;border-radius:18px;padding:18px;max-width:440px;width:calc(100% - 32px);background:var(--card);color:var(--ink)}
+dialog.troca::backdrop{background:rgba(0,0,0,.45)}
+dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid var(--line);font:inherit;margin:8px 0 14px;background:var(--card);color:var(--ink)}
 .fila li.urg .pt{box-shadow:0 0 0 3px color-mix(in srgb,var(--err) 45%,transparent)}
 .fl-txt{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
 .fl-txt a{color:var(--ink);text-decoration:none}
@@ -75,7 +84,7 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
     <small>{{ dias_prova if dias_prova is not none else '—' }} dias para a prova</small></div>
 </section>
 
-<section class="card hojecard">
+<section class="card hojecard" id="meta">
   <div class="row"><h2 style="margin:0">Meta de hoje</h2>
     <span class="tag right">{{ hoje_str }}</span></div>
   <a href="{{ url_for('metas_dias') }}" class="mut" style="font-size:.85rem;font-weight:800">Ver metas de dias anteriores ›</a>
@@ -116,7 +125,17 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
         <a href="{{ url_for('aula_ver', aid=a.id) }}"><b>{{ a.titulo }}</b></a>
         <small class="mut"><b class="pags">{{ a.paginas ~ ' pág.' if a.paginas else 'páginas: ?' }}</b> · {{ f.vez }}ª leitura · {{ f.motivo }}</small>
       </div>
+      {% if ajuste %}
+      <div class="adm-aj">
+        <button type="button" class="btn mini claro" data-trocar="{{ a.id }}" data-titulo="{{ a.titulo }}">Trocar</button>
+        <form method="post" action="{{ url_for('meta_ajuste') }}" onsubmit="return confirm('Excluir esta aula da meta de hoje?')">
+          <input type="hidden" name="acao" value="excluir"><input type="hidden" name="aula_id" value="{{ a.id }}">
+          <button class="btn mini claro" title="Excluir da meta de hoje">✕</button>
+        </form>
+      </div>
+      {% else %}
       <a class="btn mini {{ 'vermelho' if f.urgente else 'azul' }}" href="{{ url_for('aula_ver', aid=a.id) }}">Ler</a>
+      {% endif %}
     </li>
     {% endfor %}
   </ol>
@@ -127,6 +146,53 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
   {% elif not p.meta_hoje %}
   <p style="font-weight:800;color:var(--ok)">Todas as aulas já foram lidas {{ p.alvo }}x. Agora é manter a revisão com questões.</p>
   {% endif %}
+  {% endif %}
+
+  {% if ajuste and (ajuste.hoje or ajuste.adiadas) %}
+  <div class="ajustes">
+    <b>Ajustes do administrador</b>
+    <ul>
+      {% for aj in ajuste.hoje %}{% set a = ajuste.por_id.get(aj.aula_id) %}{% if a %}
+      <li><span>{% if aj.tipo == 'exclusao' %}✕ <b>{{ a.titulo }}</b> <span class="mut">excluída da meta de hoje</span>
+        {% else %}⇄ <b>{{ a.titulo }}</b> <span class="mut">trocada{% if aj.substituta_id and ajuste.por_id.get(aj.substituta_id) %} por {{ ajuste.por_id[aj.substituta_id].titulo }}{% endif %} · volta em {{ aj.volta_em.strftime('%d/%m') }}</span>{% endif %}</span>
+        <form method="post" action="{{ url_for('meta_ajuste') }}"><input type="hidden" name="acao" value="desfazer"><input type="hidden" name="ajuste_id" value="{{ aj.id }}"><button class="btn mini claro">Desfazer</button></form></li>
+      {% endif %}{% endfor %}
+      {% for a, d in ajuste.adiadas %}{% if not (ajuste.hoje|selectattr('aula_id', 'equalto', a.id)|list) %}
+      <li><span>⇄ <b>{{ a.titulo }}</b> <span class="mut">fora da meta · volta em {{ d.strftime('%d/%m') }}</span></span></li>
+      {% endif %}{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+  {% if ajuste %}
+  <dialog class="troca" id="dlg-troca">
+    <form method="post" action="{{ url_for('meta_ajuste') }}">
+      <h3 style="margin:0 0 4px">Trocar aula</h3>
+      <p class="mut" style="margin:0" id="dlg-titulo"></p>
+      <p class="hint" style="margin:6px 0 0">Ela sai da meta e volta sozinha daqui a cerca de 10 dias.</p>
+      <input type="hidden" name="acao" value="trocar"><input type="hidden" name="aula_id" id="dlg-aula">
+      <label style="font-weight:800;display:block;margin-top:10px">Colocar no lugar:</label>
+      <select name="substituta_id">
+        <option value="">Escolha automática (próxima do rodízio)</option>
+        {% for m in ajuste.opcoes|groupby('materia_id') %}
+        <optgroup label="{{ m.list[0].materia.nome }}">
+          {% for a in m.list %}<option value="{{ a.id }}">{{ a.titulo }}</option>{% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+      <div class="row" style="gap:8px;justify-content:flex-end">
+        <button type="button" class="btn claro mini" onclick="this.closest('dialog').close()">Cancelar</button>
+        <button class="btn azul mini">Trocar</button>
+      </div>
+    </form>
+  </dialog>
+  <script>
+  document.querySelectorAll('[data-trocar]').forEach(b => b.addEventListener('click', () => {
+    const d = document.getElementById('dlg-troca');
+    document.getElementById('dlg-aula').value = b.dataset.trocar;
+    document.getElementById('dlg-titulo').textContent = b.dataset.titulo;
+    d.showModal();
+  }));
+  </script>
   {% endif %}
 
   {% set b = s.bateria %}
