@@ -2686,6 +2686,30 @@ def meta_ajuste():
             db.session.delete(aj)
             db.session.commit()
             flash("Ajuste desfeito.", "ok")
+    elif oper == "incluir" and f.getlist("aula_ids"):
+        # várias aulas de uma vez
+        p = plano_do_dia()
+        na_fila = {x["aula"].id for x in p["fila"]}
+        entraram, recusadas = [], []
+        for aid in dict.fromkeys(f.getlist("aula_ids", type=int)):
+            a = db.session.get(Aula, aid)
+            st = p["est"].get(aid) if a else None
+            if not a or p["fase"] != "leitura" or not st or st["n"] >= p["alvo"] or aid in na_fila:
+                if a:
+                    recusadas.append(a.titulo)
+                continue
+            excl = AjusteMeta.query.filter_by(usuario=esc, aula_id=aid, data=h, tipo="exclusao").all()
+            if excl:
+                for aj in excl:
+                    db.session.delete(aj)
+            else:
+                db.session.add(AjusteMeta(usuario=esc, aula_id=aid, tipo="inclusao", data=h))
+            entraram.append(a.titulo)
+        db.session.commit()
+        if entraram:
+            flash(f"{len(entraram)} aula(s) adicionada(s) à meta de hoje: " + "; ".join(entraram) + ".", "ok")
+        if recusadas:
+            flash("Não entraram (já estão na meta ou já completaram as leituras): " + "; ".join(recusadas) + ".", "erro")
     else:
         a = db.get_or_404(Aula, f.get("aula_id", type=int) or 0)
         incl = AjusteMeta.query.filter_by(usuario=esc, aula_id=a.id, data=h, tipo="inclusao").all()

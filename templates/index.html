@@ -40,6 +40,13 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
 .fila .pt:before{content:counter(f)}
 .adm-aj{display:flex;gap:6px;flex:none}
 .adm-aj form{margin:0}
+.lista-incl{max-height:55vh;overflow:auto;margin:10px 0;border:2px solid var(--line);border-radius:12px;padding:6px 10px}
+.lista-incl fieldset{border:0;margin:0;padding:6px 0}
+.lista-incl legend{font-weight:900;font-size:.8rem;text-transform:uppercase;color:var(--mut);padding:0}
+.lista-incl label{display:flex;gap:8px;align-items:flex-start;padding:5px 0;cursor:pointer;line-height:1.3}
+.lista-incl label.off{opacity:.5;cursor:default}
+.lista-incl input{margin-top:3px;width:18px;height:18px;flex:none}
+.lista-incl small{display:block}
 .ajustes{margin:6px 0 12px;padding:10px 12px;border:2px dashed var(--line);border-radius:14px;font-size:.85rem}
 .ajustes ul{list-style:none;margin:6px 0 0;padding:0}
 .ajustes li{display:flex;gap:8px;align-items:center;padding:4px 0}
@@ -150,7 +157,10 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
 
   {% if p.fila %}
   {% set pags = p.fila|map(attribute='aula')|map(attribute='paginas')|select|sum %}
-  <h3 class="fila-t">Próximas leituras <small class="mut" style="font-weight:800">· {{ p.fila|length }} aula{{ '' if p.fila|length == 1 else 's' }}{% if pags %} · {{ pags }} páginas no total{% endif %}</small></h3>
+  <div class="row" style="align-items:center;gap:8px">
+    <h3 class="fila-t" style="flex:1">Próximas leituras <small class="mut" style="font-weight:800">· {{ p.fila|length }} aula{{ '' if p.fila|length == 1 else 's' }}{% if pags %} · {{ pags }} páginas no total{% endif %}</small></h3>
+    {% if ajuste and ajuste.opcoes|selectattr('ok')|list %}<button type="button" class="btn mini azul" onclick="document.getElementById('dlg-incluir').showModal()">+ Adicionar aulas</button>{% endif %}
+  </div>
   <ol class="fila">
     {% for f in p.fila %}{% set a = f.aula %}
     <li class="{{ 'urg' if f.urgente }}" style="--c:{{ a.materia.cor }}">
@@ -181,9 +191,9 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
   {% elif not p.meta_hoje %}
   <p style="font-weight:800;color:var(--ok)">Todas as aulas já foram lidas {{ p.alvo }}x. Agora é manter a revisão com questões.</p>
   {% endif %}
-  {% if ajuste and ajuste.opcoes|selectattr('ok')|list %}
+  {% if ajuste and ajuste.opcoes|selectattr('ok')|list and not p.fila %}
   <div class="row" style="justify-content:flex-end;margin-top:8px">
-    <button type="button" class="btn mini azul" onclick="document.getElementById('dlg-incluir').showModal()">+ Incluir aula</button>
+    <button type="button" class="btn mini azul" onclick="document.getElementById('dlg-incluir').showModal()">+ Adicionar aulas à meta de hoje</button>
   </div>
   {% endif %}
   {% endif %}
@@ -229,24 +239,34 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
   {% if ajuste.opcoes|selectattr('ok')|list %}
   <dialog class="troca" id="dlg-incluir">
     <form method="post" action="{{ url_for('meta_ajuste') }}">
-      <h3 style="margin:0 0 4px">Incluir aula</h3>
-      <p class="hint" style="margin:6px 0 0">A aula entra na meta de hoje e a meta aumenta uma leitura.</p>
+      <h3 style="margin:0 0 4px">Adicionar aulas à meta de hoje</h3>
+      <p class="hint" style="margin:4px 0 0">Marque uma ou mais. Cada aula adicionada aumenta a meta de hoje em uma leitura.</p>
       <input type="hidden" name="acao" value="incluir">
-      <label style="font-weight:800;display:block;margin-top:10px">Aula:</label>
-      <select name="aula_id" required>
-        <option value="">Escolha a aula…</option>
+      <div class="lista-incl">
         {% for m in ajuste.opcoes|groupby('materia_id') %}
-        <optgroup label="{{ m.list[0].aula.materia.nome }}">
-          {% for o in m.list %}<option value="{{ o.aula.id }}"{{ ' disabled' if not o.ok }}>{{ o.aula.titulo }}{{ ' — ' ~ o.aviso if o.aviso }}</option>{% endfor %}
-        </optgroup>
+        <fieldset><legend>{{ m.list[0].aula.materia.nome }}</legend>
+          {% for o in m.list %}
+          <label class="{{ 'off' if not o.ok }}"><input type="checkbox" name="aula_ids" value="{{ o.aula.id }}"{{ ' disabled' if not o.ok }}>
+            <span>{{ o.aula.titulo }}<small class="mut">{% if o.aula.paginas %} · {{ o.aula.paginas }} pág.{% endif %}{{ ' — ' ~ o.aviso if o.aviso }}</small></span></label>
+          {% endfor %}
+        </fieldset>
         {% endfor %}
-      </select>
+      </div>
       <div class="row" style="gap:8px;justify-content:flex-end">
+        <span class="mut" id="incl-cont" style="margin-right:auto;font-weight:800">0 marcada(s)</span>
         <button type="button" class="btn claro mini" onclick="this.closest('dialog').close()">Cancelar</button>
-        <button class="btn azul mini">Incluir</button>
+        <button class="btn azul mini" id="incl-ok" disabled>Adicionar</button>
       </div>
     </form>
   </dialog>
+  <script>
+  (function(){
+    const d = document.getElementById('dlg-incluir'); if (!d) return;
+    const cont = d.querySelector('#incl-cont'), ok = d.querySelector('#incl-ok');
+    d.addEventListener('change', () => { const n = d.querySelectorAll('input[name=aula_ids]:checked').length;
+      cont.textContent = n + ' marcada(s)'; ok.disabled = !n; ok.textContent = n > 1 ? 'Adicionar ' + n + ' aulas' : 'Adicionar'; });
+  })();
+  </script>
   {% endif %}
   <script>
   document.querySelectorAll('[data-trocar]').forEach(b => b.addEventListener('click', () => {
