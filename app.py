@@ -1221,8 +1221,17 @@ def bateria_do_dia(plano=None):
             itens.append({"materia": m, "grupo": gr, "chave": (m.id, gr), "ordem": (m.ordem, k),
                           "lido": gr in lidos, "ultimo": ultimo_item.get((m.id, gr)), "cadernos": cads,
                           "aula": aula_do_grupo.get((m.id, gr)), "motivo": ""})
+    com_caderno = {i["chave"] for i in itens if i["cadernos"]}
+    sem_caderno = []
+    for a in aulas_hoje:
+        grupos_a = [(a.materia_id, tp.grupo) for tp in a.topicos if tp.grupo]
+        if not grupos_a:
+            sem_caderno.append((a, "aula sem item do edital vinculado"))
+        elif not any(gk in com_caderno for gk in grupos_a):
+            sem_caderno.append((a, "nenhum caderno de questões vinculado a " + grupos_a[0][1]))
+    ids_hoje = {c.id for i in itens if i["aula"] is not None for c in i["cadernos"]}
     base = {"meta": meta, "feitas": feitas, "acertos": acertos, "item": None, "alternativas": [],
-            "escolha_admin": False}
+            "escolha_admin": False, "aulas_sem_caderno": sem_caderno, "cadernos_hoje": ids_hoje}
     if not itens:
         return base
 
