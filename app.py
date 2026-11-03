@@ -919,6 +919,7 @@ def plano_do_dia():
 
     # ajustes do admin: trocas (aula sai e volta em ~10 dias), exclusões e inclusões (só hoje)
     adiadas, voltas, excluidas, substitutas, incluidas, ajustes_hoje = {}, {}, set(), [], [], []
+    escolhida_em = {}  # aula escolhida pelo admin hoje -> quando (pode ser uma aula já lida hoje: vale a leitura seguinte)
     esc = escopo()
     if esc:
         for aj in AjusteMeta.query.filter(AjusteMeta.usuario == esc, AjusteMeta.data >= h - timedelta(days=60)) \
@@ -934,9 +935,11 @@ def plano_do_dia():
             if aj.tipo == "inclusao":
                 if aj.data == h and aj.aula_id not in incluidas:
                     incluidas.append(aj.aula_id)
+                    escolhida_em[aj.aula_id] = aj.criado_em
                 continue
             if aj.data == h and aj.substituta_id in est:
                 substitutas.append(aj.substituta_id)
+                escolhida_em[aj.substituta_id] = aj.criado_em
             if aj.volta_em and aj.volta_em > h:
                 adiadas[aj.aula_id] = aj.volta_em
             elif aj.volta_em:
@@ -998,7 +1001,9 @@ def plano_do_dia():
         ja = set()
         for sid, mot in escolhidas:  # escolhidas pelo admin (incluídas ou no lugar de uma aula trocada)
             a = por_id.get(sid)  # pode ser até uma aula trocada antes ("fora da meta"): o admin a trouxe de volta hoje
-            if not a or sid in ja or est[sid]["n"] >= alvo or est[sid]["hoje"]:
+            u, quando = est[sid]["ultima"] if a else None, escolhida_em.get(sid)
+            lida_depois = bool(u and (quando is None or u > quando))  # já fez a leitura pedida pelo admin
+            if not a or sid in ja or est[sid]["n"] >= alvo or (est[sid]["hoje"] and lida_depois):
                 continue
             ja.add(sid)
             fila.append({"aula": a, "vez": est[a.id]["n"] + 1, "motivo": mot, "urgente": False})
@@ -1801,16 +1806,16 @@ def index():
                 st = p["est"].get(a.id, {})
                 if a.id in na_fila:
                     return "já está na meta"
-                if st.get("hoje"):
-                    return "lida hoje"
                 if st.get("n", 0) >= p["alvo"]:
                     return f"já lida {p['alvo']}x"
+                if st.get("hoje"):
+                    return "lida hoje"
                 if a.id in p["adiadas"]:
                     return f"trocada · voltaria em {p['adiadas'][a.id].strftime('%d/%m')}"
                 if a.id in p["excluidas"]:
                     return "excluída hoje"
                 return ""
-            bloqueia = ("já está na meta", "lida hoje", f"já lida {p['alvo']}x")
+            bloqueia = ("já está na meta", f"já lida {p['alvo']}x")
             opcoes = []
             for m in materias:
                 for a in sorted(m.aulas, key=lambda x: (x.ordem or 0, x.id)):
@@ -2628,8 +2633,8 @@ def meta_ajuste():
         elif oper == "incluir":
             p = plano_do_dia()
             st = p["est"].get(a.id)
-            if p["fase"] != "leitura" or not st or st["n"] >= p["alvo"] or st["hoje"]:
-                flash(f"“{a.titulo}” não pode entrar na meta de hoje (já lida hoje ou já completou as leituras).", "erro")
+            if p["fase"] != "leitura" or not st or st["n"] >= p["alvo"]:
+                flash(f"“{a.titulo}” não pode entrar na meta de hoje (já completou as leituras).", "erro")
             elif a.id in {x["aula"].id for x in p["fila"]}:
                 flash(f"“{a.titulo}” já está na meta de hoje.", "erro")
             elif AjusteMeta.query.filter_by(usuario=esc, aula_id=a.id, data=h, tipo="exclusao").first():
