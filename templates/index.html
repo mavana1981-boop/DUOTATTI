@@ -50,6 +50,13 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
 .fl-txt a{color:var(--ink);text-decoration:none}
 .fl-txt .pags{color:var(--ink)}
 .fl-txt small:first-child{font-weight:800;color:var(--c);font-size:.75rem;text-transform:uppercase;letter-spacing:.03em}
+.edital{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
+@media (max-width:560px){.edital{grid-template-columns:1fr}}
+.ed-item{display:flex;gap:14px;align-items:center}
+.ed-item .anel{width:78px;height:78px}
+.ed-item .anel span{width:60px;height:60px;font-size:1.15rem}
+.ed-item b{display:block;font-size:.98rem;font-weight:900;line-height:1.25}
+.ed-item small{color:var(--mut);font-weight:700;display:block;line-height:1.3}
 {% endblock %}
 {% block conteudo %}
 {% set s = h.dia %}{% set p = s.plano %}
@@ -83,6 +90,32 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
   <div class="stat"><small>Leituras ({{ p.alvo }}x cada aula)</small><b>{{ p.total_feito }}/{{ p.total_necessario }}</b>
     <small>{{ dias_prova if dias_prova is not none else '—' }} dias para a prova</small></div>
 </section>
+
+{% set ed_aulas = trilha|map(attribute=1)|map(attribute='aulas')|sum %}
+{% if ed_aulas %}
+{% set ed_lidas = trilha|map(attribute=1)|map(attribute='aulas_lidas')|sum %}
+{% set ed_feitas = trilha|map(attribute=1)|map(attribute='leituras_meta')|sum %}
+{% set ed_total = trilha|map(attribute=1)|map(attribute='leituras_total_meta')|sum %}
+{% set ed_compl = trilha|map(attribute=1)|map(attribute='aulas_completas')|sum %}
+{% set ed_alvo = trilha[0][1].alvo %}
+{% set pct_a = (100 * ed_lidas / ed_aulas)|round(0, 'floor')|int %}
+{% set pct_m = ((100 * ed_feitas / ed_total) if ed_total else 0)|round(0, 'floor')|int %}
+<section class="card" id="edital" style="margin-bottom:16px">
+  <h2 style="margin:0">Progresso no edital</h2>
+  <div class="edital">
+    <div class="ed-item">
+      <div class="anel" style="--c:var(--ok);--p:{{ pct_a }}"><span>{{ pct_a }}%</span></div>
+      <div><b>das aulas já foram lidas</b>
+        <small>{{ ed_lidas }} de {{ ed_aulas }} aula{{ '' if ed_aulas == 1 else 's' }} com pelo menos uma leitura</small></div>
+    </div>
+    <div class="ed-item">
+      <div class="anel" style="--c:var(--blue);--p:{{ pct_m }}"><span>{{ pct_m }}%</span></div>
+      <div><b>da meta de {{ ed_alvo }}x cada aula</b>
+        <small>{{ ed_feitas }} de {{ ed_total }} leituras · {{ ed_compl }} aula{{ '' if ed_compl == 1 else 's' }} já lida{{ '' if ed_compl == 1 else 's' }} {{ ed_alvo }}x</small></div>
+    </div>
+  </div>
+</section>
+{% endif %}
 
 <section class="card hojecard" id="meta">
   <div class="row"><h2 style="margin:0">Meta de hoje</h2>
