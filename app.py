@@ -2096,7 +2096,7 @@ def _processar_ia(cid):
     db.session.commit()
 
     def progresso(k, total):
-        c.ia_msg = f"Lendo parte {k} de {total}…"
+        c.ia_msg = (k if isinstance(k, str) else f"Lendo parte {k} de {total}…")[:300]
         db.session.commit()
 
     try:
@@ -2114,12 +2114,14 @@ def _processar_ia(cid):
             c.gabarito = gab
             db.session.commit()
         else:
-            res = IA.extrair(c.pdf_questoes, progresso)
+            res = IA.extrair(c.pdf_questoes, progresso, esperadas=list(c.gabarito))
         ok = montar_questoes(c, extra=res)
         lidas = sum(1 for n, q in res.items() if n in c.gabarito and q["ok"])
         c = db.session.get(Caderno, cid)
         c.ia_status = "ok"
-        c.ia_msg = f"{ok} de {c.total} questões prontas ({lidas} lidas pela IA)."
+        faltam = [str(n) for n in sorted(c.gabarito) if not (res.get(n) or {}).get("ok")]
+        c.ia_msg = (f"{ok} de {c.total} questões prontas ({lidas} lidas pela IA)."
+                    + (f" Incompletas: {', '.join(faltam[:20])}{'…' if len(faltam) > 20 else ''}." if faltam else ""))[:300]
     except Exception as e:  # noqa: BLE001
         db.session.rollback()
         c = db.session.get(Caderno, cid)
