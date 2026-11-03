@@ -348,7 +348,8 @@ def eh_admin():
 CHAVES_USUARIO = None  # definido após DEFAULTS
 
 USUARIOS_INICIAIS = [("admin", "Administrador", "admin", True), ("renata", "Renata", "tatti", False),
-                     ("james", "James", "james123", False)]
+                     ("james", "James", "james123", False), ("andre", "André", "andre123", False),
+                     ("alencar", "Alencar", "alencar123", False)]
 
 
 class ErroApp(db.Model):
