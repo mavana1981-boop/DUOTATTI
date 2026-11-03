@@ -1,8 +1,12 @@
 """Leitura de cadernos de questões com IA (Claude API) — leitura criteriosa, com conferência.
 
 Como funciona:
-1. O PDF é enviado em partes pequenas (com uma página de contexto antes e depois). Junto vai o
-   texto extraído das páginas, como apoio para a IA conferir palavra por palavra.
+0. ECONOMIA: o leitor gratuito por regras (questoes.py) roda antes, no app. A IA só recebe as
+   páginas das questões que ele não conseguiu montar completas (parâmetro `somente`), e só precisa
+   transcrever essas questões.
+1. O PDF é enviado em partes (com a página anterior como contexto, por causa dos textos de apoio).
+   A primeira leitura usa um modelo mais barato (ANTHROPIC_MODEL_LEITURA); a conferência usa o
+   modelo principal (ANTHROPIC_MODEL).
 2. A IA primeiro faz um INVENTÁRIO (todos os números de questão que começam nas páginas) e depois
    transcreve cada questão. Os textos de apoio vêm UMA vez, com a faixa de questões que os usam
    ("Leia o texto para responder às questões 1 a 5"), e são copiados para cada questão aqui no código.
@@ -18,8 +22,10 @@ o caderno chegou sem gabarito e ele está ESCRITO no próprio PDF.
 
 Configuração (variáveis de ambiente no Railway):
   ANTHROPIC_API_KEY    chave da API (obrigatória para ativar a IA)
-  ANTHROPIC_MODEL      modelo (padrão: claude-sonnet-5-5)
-  IA_PAGINAS_POR_PARTE páginas por chamada (padrão: 4)
+  ANTHROPIC_MODEL      modelo da conferência (padrão: claude-sonnet-5-5)
+  ANTHROPIC_MODEL_LEITURA modelo da primeira leitura (padrão: claude-haiku-5-5)
+  IA_PAGINAS_POR_PARTE páginas por chamada (padrão: 6)
+  IA_MODO              "completo" para a IA ler o caderno inteiro, ignorando o leitor gratuito
   IA_RODADAS_CONFERENCIA rodadas de releitura do que faltou (padrão: 2)
 """
 import base64
@@ -31,6 +37,7 @@ import re
 from pypdf import PdfReader, PdfWriter
 
 MODELO_PADRAO = "claude-sonnet-5-5"
+MODELO_LEITURA_PADRAO = "claude-haiku-5-5"
 MAX_TOKENS = 32000
 MAX_TOKENS_GRANDE = 64000
 
@@ -42,7 +49,6 @@ REGRAS = """REGRAS DE LEITURA (seja criterioso — nada pode ficar para trás):
 - ALTERNATIVAS: todas, de (A) até a última (normalmente E), cada uma completa até o fim, mesmo que continue na coluna ou página seguinte.
 - FIGURAS: se a questão tiver imagem, gráfico, tabela ou esquema necessário para respondê-la, descreva-o objetivamente (tabelas: transcreva linha a linha).
 - IGNORE gabaritos, folhas de resposta, rascunho, comentários, resoluções, marcações de alternativa correta, cabeçalhos/rodapés, instruções gerais da prova e propagandas. NUNCA indique qual alternativa é a correta e nunca resolva as questões.
-- O "texto extraído" que acompanha o PDF (quando houver) serve só para conferir palavras; a ordem dele pode estar embaralhada. Confie na imagem do PDF para a ordem e a estrutura.
 - Antes de responder, CONFIRA: cada número do inventário tem sua questão transcrita, com enunciado e todas as alternativas? Cada questão que depende de texto de apoio aparece em "textos" com a faixa certa?"""
 
 FORMATO = """Responda SOMENTE com JSON válido, sem texto antes ou depois, no formato:
@@ -63,7 +69,7 @@ Este PDF contém {total} página(s). As páginas PRINCIPAIS são as páginas {in
 Transcreva TODAS as questões de múltipla escolha cujo número/início aparece nas páginas principais. Se o final de uma questão continuar numa página de contexto seguinte, use-a para completar. Não transcreva questões que começam apenas nas páginas de contexto (mas transcreva textos de apoio de páginas de contexto anteriores que as questões principais usem).
 
 {regras}
-{extra_gabarito}{texto_extraido}
+{extra_gabarito}
 {formato}"""
 
 PROMPT_RELEITURA = """Você está transcrevendo um caderno de questões de concurso (banca VUNESP, concurso de Escrevente do TJSP) para um aplicativo de estudos.
@@ -73,7 +79,7 @@ Uma primeira leitura deixou falhas. Este PDF contém {total} página(s) do cader
 Procure com atenção em todas as páginas e nas duas colunas — a questão pode estar no pé de uma coluna, continuar na coluna/página seguinte, ou depender de um texto de apoio que começa páginas antes. Transcreva também, COMPLETO, o texto de apoio que essas questões usam. Se uma dessas questões realmente não estiver neste PDF, deixe-a fora da lista "questoes" e fora do "inventario".
 
 {regras}
-{texto_extraido}
+
 {formato}"""
 
 EXTRA_GABARITO = """
@@ -92,6 +98,14 @@ def disponivel():
 
 def modelo():
     return os.environ.get("ANTHROPIC_MODEL") or MODELO_PADRAO
+
+
+def modelo_leitura():
+    return os.environ.get("ANTHROPIC_MODEL_LEITURA") or MODELO_LEITURA_PADRAO
+
+
+def modo_completo():
+    return (os.environ.get("IA_MODO") or "").strip().lower() == "completo"
 
 
 def _pdf_paginas(reader, idxs):
@@ -123,19 +137,6 @@ def _int(v):
         return None
 
 
-def _bloco_texto(textos_pag, idxs, limite=40000):
-    """Texto extraído (pypdf) das páginas enviadas, como apoio de conferência."""
-    partes = []
-    for k, i in enumerate(idxs, 1):
-        t = (textos_pag[i] or "").strip()
-        if t:
-            partes.append(f"--- página {k} ---\n{t}")
-    if not partes:
-        return ""
-    corpo = "\n".join(partes)[:limite]
-    return f"\nTEXTO EXTRAÍDO DAS PÁGINAS (só para conferir palavras; a ordem pode estar embaralhada):\n<<<\n{corpo}\n>>>\n"
-
-
 class _Leitor:
     def __init__(self, pdf_bytes, com_gabarito=False):
         import anthropic
@@ -155,10 +156,10 @@ class _Leitor:
         self.gabarito = {}
 
     # -- chamada à API ------------------------------------------------------ #
-    def _chamar(self, idxs, prompt, max_tokens=MAX_TOKENS):
+    def _chamar(self, idxs, prompt, max_tokens=MAX_TOKENS, mod=None):
         dados = base64.standard_b64encode(_pdf_paginas(self.reader, idxs)).decode()
         with self.cliente.messages.stream(
-            model=modelo(), max_tokens=max_tokens,
+            model=mod or modelo(), max_tokens=max_tokens,
             messages=[{"role": "user", "content": [
                 {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": dados}},
                 {"type": "text", "text": prompt},
@@ -168,11 +169,11 @@ class _Leitor:
         texto = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
         return texto, getattr(msg, "stop_reason", "")
 
-    def _chamar_json(self, idxs, prompt, max_tokens=MAX_TOKENS):
+    def _chamar_json(self, idxs, prompt, max_tokens=MAX_TOKENS, mod=None):
         """(dados, cortado). Tenta de novo uma vez se o JSON vier inválido."""
         cortado = False
         for _ in range(2):
-            texto, stop = self._chamar(idxs, prompt, max_tokens)
+            texto, stop = self._chamar(idxs, prompt, max_tokens, mod)
             cortado = stop == "max_tokens"
             try:
                 return _json(texto), cortado
@@ -182,45 +183,45 @@ class _Leitor:
         return {}, cortado
 
     # -- leitura de uma parte (com divisão se a resposta for cortada) -------- #
-    def ler_parte(self, ini, fim, esperadas=None):
-        idxs = ([ini - 1] if ini > 0 else []) + list(range(ini, fim)) + ([fim] if fim < self.n_pag else [])
+    def ler_parte(self, ini, fim, esperadas=None, somente=None):
+        idxs = ([ini - 1] if ini > 0 else []) + list(range(ini, fim))
         p_ini = 2 if ini > 0 else 1
         p_fim = p_ini + (fim - ini) - 1
         ctx = []
         if ini > 0:
             ctx.append("A página 1 é contexto (página anterior)")
-        if fim < self.n_pag:
-            ctx.append(f"a página {len(idxs)} é contexto (página seguinte)")
         contexto = (" " + "; ".join(ctx) + ".") if ctx else ""
         esp = ""
-        if esperadas:
+        if somente:
+            esp = ("\nIMPORTANTE: transcreva SOMENTE as questões de números "
+                   + ", ".join(map(str, somente)) + " (as que começarem nestas páginas). "
+                   "Ignore todas as outras questões; no inventário, liste só esses números.")
+        elif esperadas:
             esp = (f"\nO caderno completo tem as questões de números {min(esperadas)} a {max(esperadas)} "
                    f"({len(esperadas)} questões); transcreva as que começam nestas páginas principais.")
         prompt = PROMPT.format(
             total=len(idxs), ini=p_ini, fim=p_fim, contexto=contexto, esperadas=esp, regras=REGRAS,
             extra_gabarito=EXTRA_GABARITO if self.com_gabarito else "",
-            texto_extraido=_bloco_texto(self.textos, idxs),
             formato=FORMATO.format(campo_gabarito=',\n "gabarito": {}' if self.com_gabarito else ""))
-        dados, cortado = self._chamar_json(idxs, prompt)
+        dados, cortado = self._chamar_json(idxs, prompt, mod=modelo_leitura())
         if cortado:
             if fim - ini > 1:  # divide ao meio e lê cada metade
                 meio = (ini + fim) // 2
-                self.ler_parte(ini, meio, esperadas)
-                self.ler_parte(meio, fim, esperadas)
+                self.ler_parte(ini, meio, esperadas, somente)
+                self.ler_parte(meio, fim, esperadas, somente)
                 return
-            dados2, _ = self._chamar_json(idxs, prompt, MAX_TOKENS_GRANDE)
+            dados2, _ = self._chamar_json(idxs, prompt, MAX_TOKENS_GRANDE, mod=modelo_leitura())
             dados = dados2 or dados
-        self.incorporar(dados, (max(0, ini - 1), min(self.n_pag, fim + 1)))
+        self.incorporar(dados, (max(0, ini - 1), min(self.n_pag, fim + 1)), so=set(somente) if somente else None)
 
     # -- junta a resposta no resultado --------------------------------------- #
     def incorporar(self, dados, origem, so=None):
         if not dados:
             return
-        if not so:
-            for n in dados.get("inventario") or []:
-                n = _int(n)
-                if n and 1 <= n <= 300:
-                    self.inventario.add(n)
+        for n in dados.get("inventario") or []:
+            n = _int(n)
+            if n and 1 <= n <= 300 and (not so or n in so):
+                self.inventario.add(n)
         for t in dados.get("textos") or []:
             texto = str((t or {}).get("texto") or "").strip()
             faixa = [_int(x) for x in ((t or {}).get("questoes") or [])]
@@ -299,12 +300,30 @@ class _Leitor:
                 prob[n] = "cita um texto de apoio que não foi transcrito"
         return prob
 
+    def mapear_paginas(self, numeros):
+        """{numero: página} pelo texto do PDF, seguindo a ordem 1, 2, 3... (sem custo de IA)."""
+        if not numeros or not any(t.strip() for t in self.textos):
+            self._mapa = {}
+            return self._mapa
+        import questoes as QZ
+        inicios, partes, pos = [], [], 0
+        for t in self.textos:
+            inicios.append(pos)
+            partes.append(t)
+            pos += len(t) + 1
+        texto = "\n".join(partes)
+        try:
+            achados = QZ.localizar_questoes(texto, sorted(numeros))
+        except Exception:  # noqa: BLE001
+            achados = {}
+        mapa = {}
+        for n, (a, _) in achados.items():
+            mapa[n] = max(i for i, ini in enumerate(inicios) if ini <= a)
+        self._mapa = mapa
+        return mapa
+
     def _pagina_da_questao(self, n):
-        rx = re.compile(rf"(?im)^[ \t]*(?:quest[ãa]o[ \t]*)?0*{n}[ \t]*[\.\)\-–—:]?(?!\d)")
-        for i, t in enumerate(self.textos):
-            if rx.search(t or ""):
-                return i
-        return None
+        return getattr(self, "_mapa", {}).get(n)
 
     def _paginas_para(self, numeros):
         """Páginas a enviar na releitura de um grupo de questões."""
@@ -346,27 +365,72 @@ class _Leitor:
             probl = "\n".join(f"- Questão {n}: {prob[n]}." for n in g)
             prompt = PROMPT_RELEITURA.format(
                 total=len(idxs), lista=", ".join(map(str, g)), problemas="\nO que faltou:\n" + probl + "\n",
-                regras=REGRAS, texto_extraido=_bloco_texto(self.textos, idxs),
+                regras=REGRAS,
                 formato=FORMATO.format(campo_gabarito=""))
             dados, cortado = self._chamar_json(idxs, prompt, MAX_TOKENS_GRANDE if len(g) > 2 else MAX_TOKENS)
             self.incorporar(dados, (idxs[0], idxs[-1] + 1), so=set(g))
             yield g
 
 
-def extrair(pdf_bytes, progresso=None, com_gabarito=False, esperadas=None):
+def _paginas_alvo(lt, somente):
+    """Páginas a ler quando só algumas questões faltam; None = ler tudo."""
+    mapa = lt.mapear_paginas(lt.esperadas_todas or somente)
+    if not mapa:
+        return None
+    pags, perdidas = set(), []
+    for n in somente:
+        p = mapa.get(n)
+        if p is None:
+            perdidas.append(n)
+            continue
+        pags |= {p, min(lt.n_pag - 1, p + 1)}  # +1: a questão pode continuar na página seguinte
+    for n in perdidas:  # sem marca no texto: lê entre as vizinhas localizadas
+        abaixo = [mapa[k] for k in mapa if k < n]
+        acima = [mapa[k] for k in mapa if k > n]
+        a = max(abaixo) if abaixo else 0
+        b = min(acima) if acima else lt.n_pag - 1
+        if b - a > 8:
+            return None
+        pags |= set(range(a, b + 1))
+    if len(pags) >= lt.n_pag * 0.8:
+        return None
+    return sorted(pags)
+
+
+def _partes(pags, passo):
+    """Agrupa páginas em blocos contínuos de até `passo` páginas: [(ini, fim), ...]."""
+    blocos, atual = [], []
+    for p in pags:
+        if atual and (p != atual[-1] + 1 or len(atual) >= passo):
+            blocos.append((atual[0], atual[-1] + 1))
+            atual = []
+        atual.append(p)
+    if atual:
+        blocos.append((atual[0], atual[-1] + 1))
+    return blocos
+
+
+def extrair(pdf_bytes, progresso=None, com_gabarito=False, esperadas=None, somente=None):
     """Retorna {numero: {"fonte","apoio","enunciado","alternativas","ok"}} lendo o PDF com o Claude.
     esperadas: números de questão do gabarito (ajudam a conferir se alguma ficou para trás).
+    somente: só estas questões precisam da IA (o resto já foi lido pelo leitor gratuito).
     Com com_gabarito=True, retorna (questoes, gabarito) — o gabarito só é transcrito se estiver escrito no PDF."""
     lt = _Leitor(pdf_bytes, com_gabarito)
     esperadas = sorted(set(esperadas or []))
-    passo = max(1, int(os.environ.get("IA_PAGINAS_POR_PARTE", "4")))
-    partes = list(range(0, lt.n_pag, passo))
-    for k, ini in enumerate(partes):
+    somente = sorted(set(somente or [])) or None
+    lt.esperadas_todas = esperadas
+    passo = max(1, int(os.environ.get("IA_PAGINAS_POR_PARTE", "6")))
+    pags = _paginas_alvo(lt, somente) if somente else None
+    if pags is None:
+        pags = list(range(lt.n_pag))
+        lt.mapear_paginas(esperadas)
+    partes = _partes(pags, passo)
+    for k, (ini, fim) in enumerate(partes):
         if progresso:
             progresso(k + 1, len(partes))
-        lt.ler_parte(ini, min(lt.n_pag, ini + passo), esperadas)
+        lt.ler_parte(ini, fim, esperadas, somente)
 
-    esp_conf = esperadas or (sorted(lt.gabarito) if com_gabarito else None)
+    esp_conf = somente or esperadas or (sorted(lt.gabarito) if com_gabarito else None)
     rodadas = max(0, int(os.environ.get("IA_RODADAS_CONFERENCIA", "2")))
     for r in range(rodadas):
         prob = lt.problemas(esp_conf)

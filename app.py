@@ -2046,18 +2046,9 @@ def sem_nulos(t):
     return RX_CONTROLE.sub("", str(t or ""))
 
 
-def montar_questoes(c, extra=None):
-    """(Re)constrói as questões do caderno a partir do PDF. Retorna quantas ficaram completas."""
-    Questao.query.filter_by(caderno_id=c.id).delete()
-    gab = c.gabarito
-    if not gab:
-        db.session.commit()
-        return 0
-    if not c.pdf_questoes:  # sem PDF: questões só com as letras, uma por número do gabarito
-        for n in gab:
-            db.session.add(Questao(caderno_id=c.id, numero=n, enunciado="", alternativas_json="{}", ok=False))
-        db.session.commit()
-        return 0
+def ler_questoes_sem_ia(c):
+    """Leitor gratuito (por regras) sobre o texto do PDF: {n: questão} para todos os números do gabarito."""
+    gab = c.gabarito or {}
     try:
         paginas = [p.extract_text() or "" for p in PdfReader(io.BytesIO(c.pdf_questoes)).pages]
     except Exception:
@@ -2070,8 +2061,32 @@ def montar_questoes(c, extra=None):
         res = {}
     for n in gab:
         res.setdefault(n, {"fonte": "", "enunciado": "", "alternativas": {}, "apoio": "", "ok": False})
+    return res
+
+
+def precisa_ia(q):
+    """Questão do leitor gratuito que ainda precisa da IA (incompleta ou sem o texto de apoio que cita)."""
+    return (not q.get("ok") or len(q.get("alternativas") or {}) < 4
+            or (not q.get("apoio") and IA.RX_PEDE_APOIO.search(q.get("enunciado") or "")))
+
+
+def montar_questoes(c, extra=None):
+    """(Re)constrói as questões do caderno a partir do PDF. Retorna quantas ficaram completas."""
+    Questao.query.filter_by(caderno_id=c.id).delete()
+    gab = c.gabarito
+    if not gab:
+        db.session.commit()
+        return 0
+    if not c.pdf_questoes:  # sem PDF: questões só com as letras, uma por número do gabarito
+        for n in gab:
+            db.session.add(Questao(caderno_id=c.id, numero=n, enunciado="", alternativas_json="{}", ok=False))
+        db.session.commit()
+        return 0
+    res = ler_questoes_sem_ia(c)
     for n, q in (extra or {}).items():  # leitura da IA tem prioridade
         if n in gab and (q["ok"] or not res.get(n, {}).get("ok")):
+            if not q.get("apoio") and res.get(n, {}).get("apoio"):  # IA leu sem o texto de apoio: mantém o do leitor
+                q = dict(q, apoio=res[n]["apoio"])
             res[n] = q
     for n, q in res.items():
         alts = {k: sem_nulos(v) for k, v in (q.get("alternativas") or {}).items()}
@@ -2114,7 +2129,14 @@ def _processar_ia(cid):
             c.gabarito = gab
             db.session.commit()
         else:
-            res = IA.extrair(c.pdf_questoes, progresso, esperadas=list(c.gabarito))
+            somente = None
+            if not IA.modo_completo():  # economia: a IA só lê o que o leitor gratuito não montou
+                base = ler_questoes_sem_ia(c)
+                somente = [n for n in c.gabarito if precisa_ia(base.get(n, {}))]
+            if somente == []:
+                res = {}
+            else:
+                res = IA.extrair(c.pdf_questoes, progresso, esperadas=list(c.gabarito), somente=somente)
         ok = montar_questoes(c, extra=res)
         lidas = sum(1 for n, q in res.items() if n in c.gabarito and q["ok"])
         c = db.session.get(Caderno, cid)
