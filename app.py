@@ -380,7 +380,7 @@ DEFAULTS = {
 }
 
 
-CHAVES_USUARIO = set(DEFAULTS) | {"ordem_evolucao", "tutorial_visto"}  # cada aluno tem as suas
+CHAVES_USUARIO = set(DEFAULTS) | {"ordem_evolucao", "tutorial_visto", "bateria_escolha"}  # cada aluno tem as suas
 
 
 def chave_cfg(k, login=None):
@@ -1159,13 +1159,21 @@ def dados_calendario():
     return {"dias": cal, "marcos": marcos, "hoje": hoje().isoformat()}, proxima, plano_aula
 
 
-def bateria_do_dia():
-    """Bateria diária de questões, alternando os itens do edital.
+def _escolha_admin():
+    """Bateria escolhida pelo admin para hoje (por aluno): {"data", "caderno_id"}; vale só no dia."""
+    try:
+        d = json.loads(configs().get("bateria_escolha") or "null")
+    except ValueError:
+        d = None
+    return d if isinstance(d, dict) and d.get("data") == hoje().isoformat() else None
 
-    Item sugerido = item do edital (macrotópico) há mais tempo sem questões, preferindo itens
-    cujas aulas já foram lidas; o item feito ontem vai para o fim da fila (alternância);
-    desempate: matéria há mais tempo sem questões e ordem do edital.
-    Se já houve questões hoje, mantém o item do dia."""
+
+def bateria_do_dia(plano=None):
+    """Bateria diária de questões. Ordem de escolha do item do edital:
+      1) caderno escolhido pelo admin para hoje;
+      2) item em que já houve questões hoje (não troca no meio do dia);
+      3) item das AULAS DE HOJE (planejadas ou já lidas hoje) que tenha caderno de questões;
+      4) rodízio: item com caderno, já lido, há mais tempo sem questões (o de ontem vai para o fim)."""
     cfg = configs()
     meta = max(QUESTOES_MINIMO, int(cfg_num(cfg, "meta_questoes_dia")))
     h = hoje()
@@ -1182,6 +1190,23 @@ def bateria_do_dia():
         if c and c.topico and c.topico.grupo:
             ultimo_item[(t.materia_id, c.topico.grupo)] = t.feita_em
 
+    # aulas de hoje: já lidas hoje + planejadas na meta
+    if plano is None:
+        plano = plano_do_dia()
+    est = plano.get("est", {})
+    lidas_hoje = [a for a in Aula.query.order_by(Aula.id).all() if est.get(a.id, {}).get("hoje")]
+    aulas_hoje = lidas_hoje + [f["aula"] for f in plano.get("fila", []) if f["aula"] not in lidas_hoje]
+    assuntos_hoje = {tp.id for a in aulas_hoje for tp in a.topicos}
+    aula_do_grupo = {}
+    for a in aulas_hoje:
+        for tp in a.topicos:
+            if tp.grupo:
+                aula_do_grupo.setdefault((a.materia_id, tp.grupo), a)
+
+    def ordenar_cadernos(cads):
+        # cadernos do mesmo assunto da aula de hoje primeiro; depois os menos resolvidos
+        return sorted(cads, key=lambda c: (c.topico_id not in assuntos_hoje, len(c.tentativas), c.id))
+
     itens = []
     for m in materias:
         grupos = []
@@ -1192,20 +1217,17 @@ def bateria_do_dia():
                 grupos.append(tp.grupo)
         lidos = {tp.grupo for a in m.aulas if a.leituras for tp in a.topicos if tp.grupo}
         for k, gr in enumerate(grupos):
-            cads = [c for c in m.cadernos if c.topico and c.topico.grupo == gr and c.total]
+            cads = ordenar_cadernos([c for c in m.cadernos if c.topico and c.topico.grupo == gr and c.total])
             itens.append({"materia": m, "grupo": gr, "chave": (m.id, gr), "ordem": (m.ordem, k),
-                          "lido": gr in lidos, "ultimo": ultimo_item.get((m.id, gr)), "cadernos": cads})
+                          "lido": gr in lidos, "ultimo": ultimo_item.get((m.id, gr)), "cadernos": cads,
+                          "aula": aula_do_grupo.get((m.id, gr)), "motivo": ""})
+    base = {"meta": meta, "feitas": feitas, "acertos": acertos, "item": None, "alternativas": [],
+            "escolha_admin": False}
     if not itens:
-        return {"meta": meta, "feitas": feitas, "acertos": acertos, "item": None, "alternativas": []}
-
-    hoje_item = None
-    for t in tents:
-        if t.feita_em >= ini and t.caderno and t.caderno.topico and t.caderno.topico.grupo:
-            hoje_item = (t.materia_id, t.caderno.topico.grupo)
-            break
+        return base
 
     def chave(it):
-        return (not it["lido"], it["ultimo"] or datetime.min,
+        return (not it["cadernos"], not it["lido"], it["ultimo"] or datetime.min,
                 ultimo_mat.get(it["materia"].id) or datetime.min, it["ordem"])
 
     ontem = dt0(h - timedelta(days=1))
@@ -1213,9 +1235,35 @@ def bateria_do_dia():
     ordenados = (sorted([i for i in itens if i["lido"] and not recente(i)], key=chave)
                  + sorted([i for i in itens if not i["lido"] and not recente(i)], key=chave)
                  + sorted([i for i in itens if recente(i)], key=chave))
-    item = next((i for i in itens if i["chave"] == hoje_item), None) or ordenados[0]
-    alternativas = [i for i in ordenados if i is not item][:3]
-    return {"meta": meta, "feitas": feitas, "acertos": acertos, "item": item, "alternativas": alternativas}
+
+    item = None
+    esc = _escolha_admin()
+    cad = db.session.get(Caderno, esc.get("caderno_id")) if esc and esc.get("caderno_id") else None
+    if cad:
+        gr = cad.topico.grupo if cad.topico and cad.topico.grupo else None
+        base_it = next((i for i in itens if gr and i["chave"] == (cad.materia_id, gr)), None)
+        if base_it:
+            item = dict(base_it, cadernos=[cad] + [x for x in base_it["cadernos"] if x.id != cad.id])
+        else:
+            item = {"materia": cad.materia, "grupo": cad.topico.rotulo if cad.topico else cad.titulo,
+                    "chave": (cad.materia_id, gr), "ordem": (cad.materia.ordem, 0), "lido": True,
+                    "ultimo": None, "cadernos": [cad], "aula": None}
+        item["motivo"] = "escolhida pelo admin para hoje"
+        base["escolha_admin"] = True
+    if item is None:
+        hoje_item = next(((t.materia_id, t.caderno.topico.grupo) for t in tents if t.feita_em >= ini and t.caderno
+                          and t.caderno.topico and t.caderno.topico.grupo), None)
+        item = next((dict(i, motivo="você já começou este item hoje") for i in itens if i["chave"] == hoje_item), None)
+    if item is None:
+        do_dia = [i for i in itens if i["aula"] is not None and i["cadernos"]]
+        do_dia.sort(key=lambda i: (aulas_hoje.index(i["aula"]), chave(i)))
+        if do_dia:
+            item = dict(do_dia[0], motivo=f"da aula de hoje: {do_dia[0]['aula'].titulo}")
+    if item is None:
+        item = dict(ordenados[0], motivo="rodízio dos itens do edital")
+    alternativas = [i for i in ordenados if i["chave"] != item["chave"]]
+    alternativas = sorted(alternativas, key=lambda i: i["aula"] is None)[:3]
+    return dict(base, item=item, alternativas=alternativas)
 
 
 def resumo_dia():
@@ -1225,8 +1273,8 @@ def resumo_dia():
     rec = Tentativa.query.filter(Tentativa.feita_em >= dt0(h - timedelta(days=6))).all()
     r_resp = sum(t.respondidas for t in rec)
     return {
-        "plano": plano_do_dia(),
-        "bateria": bateria_do_dia(),
+        "plano": (pl := plano_do_dia()),
+        "bateria": bateria_do_dia(pl),
         "questoes": sum(t.respondidas for t in tents_hoje),
         "meta_questoes": max(QUESTOES_MINIMO, int(cfg_num(cfg, "meta_questoes_dia"))),
         "acerto7": round(100 * sum(t.acertos for t in rec) / r_resp, 1) if r_resp else None,
@@ -1825,7 +1873,10 @@ def index():
             ajuste = {"opcoes": opcoes, "por_id": por_id,
                       "hoje": [aj for aj in p["ajustes_hoje"]],
                       "adiadas": sorted(((por_id[i], d) for i, d in p["adiadas"].items() if i in por_id), key=lambda x: x[1])}
+    cadernos_admin = (Caderno.query.join(Materia).order_by(Materia.ordem, Caderno.titulo).all()
+                      if eh_admin() else [])
     return render_template("index.html", trilha=trilha, h=hm, xp=xp, nv=nivel(xp), ajuste=ajuste,
+                           cadernos_admin=cadernos_admin,
                            hoje_str=f"{dias_sem[h0.weekday()]}, {h0.strftime('%d/%m')}",
                            streak=ofensiva(), tot_aulas=tot_aulas, tot_lidas=tot_lidas)
 
@@ -2599,6 +2650,23 @@ def _refazer_foto_do_dia():
         snap.planejadas_json = json.dumps(lidas_hoje + [f["aula"].id for f in p["fila"]])
         snap.meta_leituras = p["meta_hoje"]
         db.session.commit()
+
+
+@app.post("/bateria/escolher")
+@so_admin
+def bateria_escolher():
+    """Admin troca o caderno da bateria de hoje do aluno que está vendo (ou volta ao automático)."""
+    v = request.form.get("escolha", "")
+    if v.isdigit() and db.session.get(Caderno, int(v)):
+        salvar_cfg("bateria_escolha", json.dumps({"data": hoje().isoformat(), "caderno_id": int(v)}))
+        c = db.session.get(Caderno, int(v))
+        aluno = Usuario.query.filter_by(login=escopo()).first()
+        flash(f"Bateria de hoje de {(aluno.nome if aluno else None) or escopo()} trocada para “{c.titulo}”.", "ok")
+    else:
+        salvar_cfg("bateria_escolha", "")
+        flash("Bateria de hoje voltou a ser escolhida automaticamente.", "info")
+    db.session.commit()
+    return redirect(url_for("index") + "#bateria")
 
 
 @app.post("/meta/ajuste")

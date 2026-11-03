@@ -25,7 +25,9 @@ background:conic-gradient(var(--c) calc(var(--p)*1%),var(--soft) 0)}
 .bateria h3,.hojecard h3.sec{font-size:1rem;font-weight:900}
 .item-dia{border:2px solid color-mix(in srgb,var(--c) 45%,transparent);background:color-mix(in srgb,var(--c) 8%,transparent);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}
 .item-dia>small:first-child{font-weight:800;color:var(--c);font-size:.75rem;text-transform:uppercase;letter-spacing:.03em}
-.alt{margin-top:8px}.alt summary{cursor:pointer;font-weight:800;font-size:.85rem;color:var(--mut)}
+.alt{margin-top:8px}
+.motivo-b{font-weight:800;color:var(--ok2)}
+.motivo-b.adm{color:var(--blue2)}.alt summary{cursor:pointer;font-weight:800;font-size:.85rem;color:var(--mut)}
 .alt ul{list-style:none;margin:6px 0 0;padding:0}.alt li{display:flex;gap:8px;padding:4px 0;font-size:.88rem}
 .alt li i{flex:none;width:10px;height:10px;border-radius:50%;background:var(--c);margin-top:5px}
 .btn-tut{margin-top:12px}
@@ -269,6 +271,7 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
     <div class="item-dia" style="--c:{{ it.materia.cor }}">
       <small>Item do edital de hoje · {{ it.materia.nome }}</small>
       <b>{{ it.grupo }}</b>
+      {% if it.motivo %}<small class="motivo-b {{ 'adm' if b.escolha_admin }}">{{ it.motivo }}</small>{% endif %}
       <small class="mut">
         {% if it.ultimo %}últimas questões desse item em {{ it.ultimo.strftime('%d/%m') }}{% else %}nenhuma questão desse item ainda{% endif %}
         {% if not it.lido %} · ainda sem aula lida desse item{% endif %}
@@ -282,6 +285,22 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
         {% endfor %}
       </div>
     </div>
+    {% if cadernos_admin %}
+    <details class="alt troca-b" {{ 'open' if b.escolha_admin }}><summary>Trocar a bateria de hoje (admin)</summary>
+      <form method="post" action="{{ url_for('bateria_escolher') }}" class="row" style="gap:8px;margin-top:8px">
+        <select name="escolha" style="flex:1;min-width:0">
+          <option value="">Automático (aula de hoje / rodízio)</option>
+          {% for mat, cs in cadernos_admin|groupby('materia.nome') %}
+          <optgroup label="{{ mat }}">
+            {% for c in cs %}<option value="{{ c.id }}" {{ 'selected' if b.escolha_admin and b.item and b.item.cadernos and b.item.cadernos[0].id == c.id }}>{{ c.titulo[:60] }} ({{ c.total }}){% if c.topico %} — {{ c.topico.rotulo[:50] }}{% endif %}</option>{% endfor %}
+          </optgroup>
+          {% endfor %}
+        </select>
+        <button class="btn mini azul">Salvar</button>
+      </form>
+      <p class="hint" style="margin:6px 0 0">Vale só para hoje, para o aluno que você está vendo.</p>
+    </details>
+    {% endif %}
     {% if b.alternativas %}
     <details class="alt"><summary>Próximos itens do rodízio</summary>
       <ul>{% for a in b.alternativas %}<li style="--c:{{ a.materia.cor }}"><i></i><span><b>{{ a.grupo }}</b> <small class="mut">· {{ a.materia.nome }}{% if a.ultimo %} · últimas em {{ a.ultimo.strftime('%d/%m') }}{% endif %}</small></span></li>{% endfor %}</ul>
