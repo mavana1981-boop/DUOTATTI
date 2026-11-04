@@ -180,7 +180,7 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
       {% if ajuste %}
       <div class="adm-aj">
         <button type="button" class="btn mini claro" data-trocar="{{ a.id }}" data-titulo="{{ a.titulo }}">Trocar</button>
-        <form method="post" action="{{ url_for('meta_ajuste') }}" onsubmit="return confirm('Tirar esta aula das aulas de hoje? A meta não muda: outra aula entra no lugar.')">
+        <form method="post" action="{{ url_for('meta_ajuste') }}" onsubmit="return confirm('Tirar esta aula das aulas de hoje? Nenhuma outra entra no lugar e a meta não muda.')">
           <input type="hidden" name="acao" value="excluir"><input type="hidden" name="aula_id" value="{{ a.id }}">
           <button class="btn mini claro" title="Tirar das aulas de hoje (a meta não muda)">✕</button>
         </form>
@@ -195,6 +195,8 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
   <p style="font-weight:800;color:var(--ok)">Você leu {{ p.feitas_hoje - p.meta_hoje }} a mais que o planejado hoje! Reajustei o plano: a partir de amanhã são {{ p.meta_amanha }} leitura{{ '' if p.meta_amanha == 1 else 's' }} por dia.</p>
   {% elif p.meta_hoje and p.feitas_hoje >= p.meta_hoje %}
   <p style="font-weight:800;color:var(--ok)">Leituras de hoje concluídas! Quer adiantar? Qualquer leitura extra diminui a meta dos próximos dias.</p>
+  {% elif p.excluidas and p.meta_hoje %}
+  <p class="mut" style="font-weight:800">As aulas que restavam para hoje foram tiradas da lista pelo administrador.</p>
   {% elif not p.meta_hoje %}
   <p style="font-weight:800;color:var(--ok)">Todas as aulas já foram lidas {{ p.alvo }}x. Agora é manter a revisão com questões.</p>
   {% endif %}

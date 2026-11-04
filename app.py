@@ -1006,7 +1006,9 @@ def plano_do_dia():
     if fase == "leitura":
         cands = [a for a in aulas if est[a.id]["n"] < alvo and est[a.id]["hoje"] == 0
                  and a.id not in adiadas and a.id not in excluidas]
-        vagas = max(0, meta_hoje - feitas_hoje)
+        # aula excluída pelo admin sai da lista sem ninguém no lugar (a vaga fica vazia; a meta não muda)
+        vagas_excluidas = sum(1 for i in excluidas if est[i]["hoje"] == 0)
+        vagas = max(0, meta_hoje - feitas_hoje - vagas_excluidas)
         marca = agora()
         planejadas = set()
         escolhidas = [(i, "incluída pelo administrador") for i in incluidas] + \
@@ -2785,7 +2787,7 @@ def meta_ajuste():
         # várias aulas de uma vez
         p = plano_do_dia()
         na_fila = {x["aula"].id for x in p["fila"]}
-        entraram, recusadas = [], []
+        entraram, recusadas, voltaram = [], [], []
         for aid in dict.fromkeys(f.getlist("aula_ids", type=int)):
             a = db.session.get(Aula, aid)
             st = p["est"].get(aid) if a else None
@@ -2793,11 +2795,17 @@ def meta_ajuste():
                 if a:
                     recusadas.append(a.titulo)
                 continue
-            for aj in AjusteMeta.query.filter_by(usuario=esc, aula_id=aid, data=h, tipo="exclusao").all():
-                db.session.delete(aj)
-            db.session.add(AjusteMeta(usuario=esc, aula_id=aid, tipo="inclusao", data=h))
+            excl = AjusteMeta.query.filter_by(usuario=esc, aula_id=aid, data=h, tipo="exclusao").all()
+            if excl:  # aula excluída hoje: só volta para a vaga dela (a meta não muda)
+                for aj in excl:
+                    db.session.delete(aj)
+                voltaram.append(aid)
+            else:
+                db.session.add(AjusteMeta(usuario=esc, aula_id=aid, tipo="inclusao", data=h))
             entraram.append(a.titulo)
         db.session.commit()
+        if voltaram:
+            _editar_foto_do_dia(na_frente=voltaram)
         if entraram:
             flash(f"{len(entraram)} aula(s) adicionada(s) à meta de hoje: " + "; ".join(entraram) + ".", "ok")
         if recusadas:
@@ -2815,7 +2823,7 @@ def meta_ajuste():
             _soltar_escolhas(esc, a.id, h)
             db.session.add(AjusteMeta(usuario=esc, aula_id=a.id, tipo="exclusao", data=h))
             db.session.commit()
-            flash(f"“{a.titulo}” saiu das aulas de hoje. A meta continua a mesma: outra aula do rodízio entrou no lugar.", "ok")
+            flash(f"“{a.titulo}” saiu das aulas de hoje. Nenhuma outra entrou no lugar e a meta continua a mesma.", "ok")
         elif oper == "incluir":
             p = plano_do_dia()
             st = p["est"].get(a.id)
@@ -2823,9 +2831,13 @@ def meta_ajuste():
                 flash(f"“{a.titulo}” não pode entrar na meta de hoje (já completou as leituras).", "erro")
             elif a.id in {x["aula"].id for x in p["fila"]}:
                 flash(f"“{a.titulo}” já está na meta de hoje.", "erro")
-            else:
+            elif AjusteMeta.query.filter_by(usuario=esc, aula_id=a.id, data=h, tipo="exclusao").first():
                 for aj in AjusteMeta.query.filter_by(usuario=esc, aula_id=a.id, data=h, tipo="exclusao").all():
-                    db.session.delete(aj)
+                    db.session.delete(aj)  # aula excluída hoje: só volta para a vaga dela
+                db.session.commit()
+                _editar_foto_do_dia(na_frente=[a.id])
+                flash(f"“{a.titulo}” voltou às aulas de hoje.", "ok")
+            else:
                 db.session.add(AjusteMeta(usuario=esc, aula_id=a.id, tipo="inclusao", data=h))
                 db.session.commit()
                 flash(f"“{a.titulo}” entrou na meta de hoje (a meta aumentou uma leitura).", "ok")
