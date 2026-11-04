@@ -139,15 +139,21 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
   <p class="mut">Nenhuma aula cadastrada ainda.</p>
   {% else %}
   <div class="ritmo">
-    <div><b>{{ p.meta_hoje }}</b><small>aula{{ '' if p.meta_hoje == 1 else 's' }} por dia</small></div>
-    <p>É quanto você precisa ler <b>por dia</b> para fechar <b>{{ p.alvo }}x cada aula</b> até <b>{{ p.limite.strftime('%d/%m') }}</b>
-      <span class="mut">(ritmo exato: {{ '%.1f'|format(p.ritmo)|replace('.', ',') }} leituras/dia)</span></p>
+    <div><b>{{ p.meta_vivo }}</b><small>aula{{ '' if p.meta_vivo == 1 else 's' }} por dia</small></div>
+    {% if p.dias > 1 %}
+    <p>É quanto você precisa ler <b>por dia</b> para fechar <b>{{ p.alvo }}x cada aula</b> até <b>{{ p.limite.strftime('%d/%m') }}</b>.
+      Recalculado a cada leitura: faltam <b>{{ p.restante }}</b> leitura{{ '' if p.restante == 1 else 's' }}{% if p.faltam_hoje %} ({{ p.faltam_hoje }} ainda hoje){% endif %}
+      para {{ p.dias - 1 }} dia{{ '' if p.dias == 2 else 's' }} depois de hoje
+      <span class="mut">(ritmo exato: {{ "%.2f"|format(p.ritmo_vivo)|replace('.', ',') }} leituras/dia)</span></p>
+    {% else %}
+    <p>Hoje é o último dia de leituras: faltam <b>{{ p.faltam_hoje }}</b> para fechar a meta de hoje.</p>
+    {% endif %}
   </div>
   {% set pl = [100, (100 * p.feitas_hoje / p.meta_hoje) if p.meta_hoje else 100]|min %}
   <div class="row" style="margin-top:10px"><b>Leituras de aula de hoje</b><span class="right mut"><b style="color:var(--ink)">{{ p.feitas_hoje }}</b>/{{ p.meta_hoje }}</span></div>
   <div class="bar azul" style="margin:6px 0 6px"><i style="width:{{ pl|round }}%"></i></div>
   <p class="hint" style="margin:0 0 12px">Faltam <b>{{ p.aulas_faltando }}</b> aula{{ '' if p.aulas_faltando == 1 else 's' }} e <b>{{ p.restante }}</b> leitura{{ '' if p.restante == 1 else 's' }} para ler cada aula {{ p.alvo }}x até <b>{{ p.limite.strftime('%d/%m') }}</b>
-    ({{ p.dias }} dia{{ '' if p.dias == 1 else 's' }}, contando hoje). A meta é recalculada todo dia conforme o que você já leu.</p>
+    ({{ p.dias }} dia{{ '' if p.dias == 1 else 's' }}, contando hoje). A meta de hoje ({{ p.meta_hoje }}) foi definida no início do dia; ler a mais reduz o ritmo dos próximos dias na hora.</p>
 
   {% if p.atrasadas %}
   <div class="alerta">
@@ -174,9 +180,9 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
       {% if ajuste %}
       <div class="adm-aj">
         <button type="button" class="btn mini claro" data-trocar="{{ a.id }}" data-titulo="{{ a.titulo }}">Trocar</button>
-        <form method="post" action="{{ url_for('meta_ajuste') }}" onsubmit="return confirm('Excluir esta aula da meta de hoje?')">
+        <form method="post" action="{{ url_for('meta_ajuste') }}" onsubmit="return confirm('Tirar esta aula das aulas de hoje? A meta não muda: outra aula entra no lugar.')">
           <input type="hidden" name="acao" value="excluir"><input type="hidden" name="aula_id" value="{{ a.id }}">
-          <button class="btn mini claro" title="Excluir da meta de hoje">✕</button>
+          <button class="btn mini claro" title="Tirar das aulas de hoje (a meta não muda)">✕</button>
         </form>
       </div>
       {% else %}
@@ -204,7 +210,7 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
     <b>Ajustes do administrador</b>
     <ul>
       {% for aj in ajuste.hoje %}{% set a = ajuste.por_id.get(aj.aula_id) %}{% if a %}
-      <li><span>{% if aj.tipo == 'exclusao' %}✕ <b>{{ a.titulo }}</b> <span class="mut">excluída da meta de hoje</span>
+      <li><span>{% if aj.tipo == 'exclusao' %}✕ <b>{{ a.titulo }}</b> <span class="mut">tirada das aulas de hoje</span>
         {% elif aj.tipo == 'inclusao' %}+ <b>{{ a.titulo }}</b> <span class="mut">incluída na meta de hoje</span>
         {% else %}⇄ <b>{{ a.titulo }}</b> <span class="mut">trocada{% if aj.substituta_id and ajuste.por_id.get(aj.substituta_id) %} por {{ ajuste.por_id[aj.substituta_id].titulo }}{% endif %} · volta em {{ aj.volta_em.strftime('%d/%m') }}</span>{% endif %}</span>
         <form method="post" action="{{ url_for('meta_ajuste') }}"><input type="hidden" name="acao" value="desfazer"><input type="hidden" name="ajuste_id" value="{{ aj.id }}"><button class="btn mini claro">Desfazer</button></form></li>
