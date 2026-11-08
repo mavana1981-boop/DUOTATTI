@@ -241,7 +241,9 @@
     });
     const fb = $('q-fb');
     fb.className = 'qz-fb ' + (correta ? 'ok' : 'erro');
-    fb.textContent = certa === 'X' ? 'Questão anulada — conta como acerto.' : correta ? 'Acertou! Resposta: ' + certa + '.' : 'Errou. A resposta certa é ' + certa + '.';
+    const ce = q && q.alternativas && Object.keys(q.alternativas).join('') === 'CE';  // item de Certo/Errado
+    const nomeR = ce ? (certa === 'C' ? 'Certo' : 'Errado') : certa;
+    fb.textContent = certa === 'X' ? 'Questão anulada — conta como acerto.' : correta ? 'Acertou! Resposta: ' + nomeR + '.' : 'Errou. A resposta certa é ' + nomeR + '.';
     $('btn-responder').hidden = true; $('btn-pular').hidden = true; $('btn-proxima').hidden = false;
     $('btn-proxima').textContent = proximaPendente(idx) < 0 ? 'Ver resultado' : 'Próxima';
     if (animar) avatar(correta ? 'feliz' : 'bravo');

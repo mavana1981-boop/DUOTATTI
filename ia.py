@@ -58,7 +58,9 @@ REGRAS = """REGRAS DE LEITURA (seja criterioso — nada pode ficar para trás):
 - Transcreva fielmente, em português, sem resumir, sem parafrasear, sem corrigir e sem "melhorar" o texto. Mantenha as quebras de parágrafo com \\n. Mantenha numeração de linhas/versos se fizer parte do texto. Junte palavras hifenizadas no fim de linha.
 - TEXTOS DE APOIO: todo texto, poema, crônica, tirinha, charge, tabela ou trecho de lei que vem antes das questões (ex.: "Leia o texto para responder às questões de números 1 a 5") deve ser transcrito COMPLETO, do título à fonte/referência final (autor, obra, site, data). Informe a faixa de questões que o usam. Se o texto começar numa página de contexto anterior, transcreva-o inteiro mesmo assim. Tirinhas/charges: transcreva as falas de cada quadro e descreva brevemente as cenas.
 - ENUNCIADO: o comando completo da questão, sem o número e sem a fonte — incluindo frases citadas, trechos destacados, itens I, II, III, afirmações, colunas para associar e qualquer texto curto que esteja DENTRO da questão (esses ficam no enunciado, não no apoio).
-- ALTERNATIVAS: todas, de (A) até a última (normalmente E), cada uma completa até o fim, mesmo que continue na coluna ou página seguinte.
+- ALTERNATIVAS: todas, de (A) até a última (normalmente E), cada uma completa até o fim, mesmo que continue na coluna ou página seguinte. Alternativas em minúsculas ("a)", "b)") também contam: use as chaves "A", "B"...
+- ITENS DE CERTO/ERRADO (ex.: CEBRASPE, "julgue o item", opções "Certo"/"Errado"): use exatamente "alternativas": {"C": "Certo", "E": "Errado"} e ponha o item a julgar no enunciado.
+- NUMERAÇÃO NO TEC CONCURSOS: nesses cadernos o número não fica ao lado da questão; os números das questões da página aparecem listados no topo ("6) 7) 8) 9) 10)") e cada questão começa com o link "www.tecconcursos.com.br/questoes/...". Numere as questões da página nessa ordem. A linha logo após o link é a fonte (banca/cargo/ano) e a seguinte é o assunto — não as coloque no enunciado.
 - FIGURAS: se a questão tiver imagem, gráfico, tabela ou esquema necessário para respondê-la, descreva-o objetivamente (tabelas: transcreva linha a linha).
 - IGNORE gabaritos, folhas de resposta, rascunho, comentários, resoluções, marcações de alternativa correta, cabeçalhos/rodapés, instruções gerais da prova e propagandas. NUNCA indique qual alternativa é a correta e nunca resolva as questões.
 - Antes de responder, CONFIRA: cada número do inventário tem sua questão transcrita, com enunciado e todas as alternativas? Cada questão que depende de texto de apoio aparece em "textos" com a faixa certa?"""
@@ -191,6 +193,11 @@ def _int(v):
         return int(str(v).strip())
     except (TypeError, ValueError):
         return None
+
+
+def _completa(alts, enun):
+    import questoes as QZ
+    return QZ.completa(alts, enun)
 
 
 class _Leitor:
@@ -390,7 +397,7 @@ class _Leitor:
                 enun = (enun + "\n\n[Figura/tabela] " + fig).strip()
             novo = {"fonte": _limpa(q.get("fonte"))[:300], "apoio": str(q.get("apoio") or "").strip(),
                     "enunciado": enun, "alternativas": dict(sorted(alts.items())),
-                    "ok": len(alts) >= 4 and bool(enun)}
+                    "ok": _completa(alts, enun)}
             antigo = self.resultado.get(n)
             if antigo is None or self._melhor(novo, antigo):
                 self.resultado[n] = novo
@@ -428,7 +435,7 @@ class _Leitor:
                 prob[n] = "não foi encontrada/transcrita"
             elif not q["enunciado"]:
                 prob[n] = "ficou sem enunciado"
-            elif len(q["alternativas"]) < 4:
+            elif not _completa(q["alternativas"], q["enunciado"]):
                 faltam = [l for l in "ABCDE" if l not in q["alternativas"]]
                 prob[n] = "faltaram alternativas (" + ", ".join(faltam) + ")"
             elif not q["apoio"] and RX_PEDE_APOIO.search(q["enunciado"]):

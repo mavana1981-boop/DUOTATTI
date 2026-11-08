@@ -620,6 +620,38 @@ def criar_usuarios():
     db.session.commit()
 
 
+def reparar_cadernos_tec():
+    """Uma vez: cadernos do TEC Concursos enviados antes do leitor próprio ficaram com o gabarito
+    incompleto (Certo/Errado e respostas coladas não eram lidos) — e as questões fora do gabarito sumiam.
+    Completa o gabarito (sem mudar nenhuma resposta já salva) e remonta as questões com o leitor do TEC."""
+    if db.session.get(Config, "reparo_tec_v1"):
+        return
+    falhou = False
+    for c in Caderno.query.all():
+        try:
+            if not c.pdf_questoes:
+                continue
+            paginas = [p.extract_text() or "" for p in PdfReader(io.BytesIO(c.pdf_questoes)).pages]
+            if not QZ.eh_tec("\n".join(paginas)):
+                continue
+            antigo = c.gabarito
+            novo = parse_gabarito_texto("\n".join(paginas), exigir_secao=True)
+            if len(novo) > len(antigo) and all(novo.get(k) == v for k, v in antigo.items()):
+                c.gabarito = novo
+                c.ia_parcial = None
+                c.ia_status = None
+                c.ia_msg = f"Gabarito completado automaticamente ({len(antigo)} → {len(novo)} questões)."
+                db.session.commit()
+                montar_questoes(c)
+        except Exception as e:  # noqa: BLE001
+            db.session.rollback()
+            app.logger.warning("reparo TEC caderno %s: %s", c.id, e)
+            falhou = True
+    if not falhou:  # só marca como feito se deu certo (senão tenta de novo no próximo deploy)
+        db.session.add(Config(chave="reparo_tec_v1", valor="ok"))
+        db.session.commit()
+
+
 def contar_paginas_faltantes():
     """Aulas sem número de páginas (ex.: contagem falhou no envio) são contadas de novo."""
     for a in Aula.query.filter(Aula.paginas.is_(None)).all():
@@ -737,7 +769,7 @@ def extrair_texto(data):
 RX_PAR = re.compile(
     r"(?<![\d/.,])(\d{1,3})\s*(?:[-–—.:=)]|ª|º)?\s*\)?\s*"
     r"(?:[Ll]etra\s+|[Aa]lternativa\s+)?"
-    r"((?i:anulad[ao])|[A-E]|X)(?![A-Za-zÀ-ú])"
+    r"((?i:anulad[ao])|(?i:certo|errado)|[A-E]|X)(?![A-Za-zÀ-ú])"
 )
 
 
@@ -763,7 +795,10 @@ def _limpar(g):
 
 
 def _norm_letra(l):
+    """Letra do gabarito. Certo/Errado (CEBRASPE) viram C/E — as "alternativas" desses itens são C e E."""
     l = l.strip().upper()
+    if l in ("CERTO", "ERRADO"):
+        return l[0]
     return "X" if l.startswith("ANULAD") or l == "*" else l
 
 
@@ -781,7 +816,7 @@ def _tabular(t):
     g = {}
     for a, b in zip(linhas, linhas[1:]):
         if (len(a) >= 3 and len(a) == len(b) and all(x.isdigit() for x in a)
-                and all(re.fullmatch(r"[A-EX*]|(?i:anulad[ao])", x) for x in b)):
+                and all(re.fullmatch(r"[A-EX*]|(?i:anulad[ao]|certo|errado)", x) for x in b)):
             for n, l in zip(a, b):
                 g.setdefault(int(n), _norm_letra(l))
     return _limpar(g)
@@ -2107,6 +2142,16 @@ def ler_questoes_sem_ia(c):
         paginas = [p.extract_text() or "" for p in PdfReader(io.BytesIO(c.pdf_questoes)).pages]
     except Exception:
         paginas = []
+    if QZ.eh_tec("\n".join(paginas)):  # caderno do TEC Concursos: formato próprio
+        try:
+            res = QZ.extrair_tec(paginas, list(gab))
+        except Exception as e:  # noqa: BLE001
+            registrar_erro(e)
+            res = None
+        if res:
+            for n in gab:
+                res.setdefault(n, {"fonte": "", "enunciado": "", "alternativas": {}, "apoio": "", "ok": False})
+            return res
     try:
         texto = QZ.cortar_gabarito(QZ.limpar_paginas(paginas), parse_gabarito_texto)
         res = QZ.extrair_questoes(texto, list(gab))
@@ -2120,7 +2165,7 @@ def ler_questoes_sem_ia(c):
 
 def precisa_ia(q):
     """Questão do leitor gratuito que ainda precisa da IA (incompleta ou sem o texto de apoio que cita)."""
-    return (not q.get("ok") or len(q.get("alternativas") or {}) < 4
+    return (not q.get("ok") or not QZ.completa(q.get("alternativas"), q.get("enunciado"))
             or (not q.get("apoio") and IA.RX_PEDE_APOIO.search(q.get("enunciado") or "")))
 
 
@@ -3202,6 +3247,18 @@ def erro_interno(e):
 def muito_grande(_):
     flash(f"Arquivo grande demais (limite {app.config['MAX_CONTENT_LENGTH'] // 1048576} MB).", "erro")
     return redirect(request.referrer or url_for("index"))
+
+
+def _reparos_iniciais():
+    """Reparos que dependem de funções definidas depois de init_db (roda uma vez, no carregamento)."""
+    try:
+        with app.app_context():
+            reparar_cadernos_tec()
+    except Exception as e:  # noqa: BLE001
+        app.logger.warning("reparos iniciais: %s", e)
+
+
+_reparos_iniciais()
 
 
 if __name__ == "__main__":

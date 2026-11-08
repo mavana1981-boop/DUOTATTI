@@ -7,6 +7,14 @@ import re
 from collections import Counter
 
 LETRAS = "ABCDE"
+CERTO_ERRADO = {"C": "Certo", "E": "Errado"}
+
+
+def completa(alternativas, enunciado=""):
+    """Questão montada: 4+ alternativas (A–E) ou item de Certo/Errado (C/E), com enunciado."""
+    alts = alternativas or {}
+    ok_alts = len(alts) >= 4 or (set(alts) == {"C", "E"} and alts.get("C", "").lower().startswith("cert"))
+    return ok_alts and len(enunciado or "") >= 3 and all(alts.values())
 
 # ---------------------------------------------------------------------------
 # Limpeza do texto
@@ -208,7 +216,7 @@ def extrair_questoes(texto_bruto, numeros):
         else:
             enun, alternativas = bloco, {}
         fonte, enun = _limpa_cabecalho(normalizar(enun))
-        ok = len(alternativas) >= 4 and len(enun) >= 3 and all(alternativas.values())
+        ok = completa(alternativas, enun)
         res[n] = {"fonte": fonte, "enunciado": enun, "alternativas": alternativas, "apoio": "", "ok": ok}
 
     for n in res:
@@ -248,3 +256,84 @@ def gabarito_inline(texto):
             ultimo = n
         pos_ant = m.end()
     return g if len(g) >= 3 else {}
+
+
+# ---------------------------------------------------------------------------
+# Cadernos do TEC Concursos (tecconcursos.com.br/.../imprimir)
+# Cada questão começa com o link www.tecconcursos.com.br/questoes/NNN; os números ficam
+# listados no topo da página ("1) 2) 3)"), as alternativas são "a)  ...b)  ..." (às vezes
+# na mesma linha) e há itens de Certo/Errado (CEBRASPE), que terminam com "CertoErrado".
+# ---------------------------------------------------------------------------
+RX_TEC_Q = re.compile(r"(?:https?://)?www\.tecconcursos\.com\.br/questoes/\d+")
+RX_TEC_LIXO = re.compile(
+    r"(?im)^(?:\d{2}/\d{2}/\d{4},\s*\d{1,2}:\d{2}\b.*|https?://www\.tecconcursos\.com\.br/questoes/cadernos/.*"
+    r"|\s*\d{1,3}\)\s*|.*tecconcursos\.com\.br/s/.*|\s*Ordena[çc][ãa]o:.*)$")
+RX_TEC_ALT = re.compile(r"(?<![A-Za-zÀ-ú0-9])([a-e])\)\s+")
+RX_TEC_CE = re.compile(r"\s*Certo\s*Errado\s*$")
+
+
+def eh_tec(texto):
+    return len(RX_TEC_Q.findall(texto or "")) >= 3
+
+
+def _alts_tec(bloco):
+    """Alternativas a), b), c)... em sequência (aceita coladas: 'requerida.b)  Pode')."""
+    marcas, esperada, pos = [], "a", 0
+    while esperada <= "e":
+        m = None
+        for cand in RX_TEC_ALT.finditer(bloco, pos):
+            if cand.group(1) == esperada:
+                m = cand
+                break
+        if esperada != "a":  # colada no fim da anterior: "Apenas Ib)", "corretasc)"
+            solta = re.compile(r"(?<![0-9])" + esperada + r"\)\s+").search(bloco, pos)
+            if solta and (m is None or solta.start() < m.start()):
+                m = solta
+        if not m:
+            break
+        marcas.append((esperada.upper(), m.start(), m.end()))
+        pos, esperada = m.end(), chr(ord(esperada) + 1)
+    if len(marcas) < 2:
+        return None, {}
+    alts = {}
+    for k, (l, a, b) in enumerate(marcas):
+        fim = marcas[k + 1][1] if k + 1 < len(marcas) else len(bloco)
+        alts[l] = normalizar(bloco[b:fim])
+    return bloco[:marcas[0][1]], alts
+
+
+def extrair_tec(paginas, numeros):
+    """{n: questão} para cadernos do TEC Concursos (numeração pela ordem dos links). None se não bater."""
+    texto = "\n".join(re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", p or "") for p in paginas)
+    gab = list(re.finditer(r"(?m)^\s*Gabarito\s*$", texto))
+    if gab:
+        texto = texto[:gab[-1].start()]
+    texto = RX_TEC_LIXO.sub("", texto)
+    partes = RX_TEC_Q.split(texto)[1:]
+    numeros = sorted(numeros)
+    if not partes or not numeros:
+        return None
+    if len(partes) != len(numeros):  # numeração pela ordem: só confia se a quantidade bater
+        if len(partes) < len(numeros) * 0.9:
+            return None
+        partes = partes[:len(numeros)]
+    res = {}
+    for n, bloco in zip(numeros, partes):
+        linhas = [l for l in bloco.strip().split("\n") if l.strip()]
+        fonte = linhas[0].strip() if linhas else ""
+        assunto = linhas[1].strip() if len(linhas) > 1 else ""
+        corpo = "\n".join(linhas[2:]) if len(linhas) > 2 else ""
+        if not assunto.lower().startswith(("direito", "língua", "lingua", "matemática", "matematica",
+                                           "noções", "nocoes", "atualidades", "informática", "informatica",
+                                           "raciocínio", "raciocinio", "legislação", "legislacao")) and " - " not in assunto:
+            corpo = "\n".join(linhas[1:])  # sem linha de assunto
+        if RX_TEC_CE.search(corpo):
+            enun, alts = RX_TEC_CE.sub("", corpo), dict(CERTO_ERRADO)
+        else:
+            enun, alts = _alts_tec(corpo)
+            if enun is None:
+                enun, alts = corpo, {}
+        enun = normalizar(enun)
+        res[n] = {"fonte": fonte[:300], "enunciado": enun, "alternativas": alts, "apoio": "",
+                  "ok": completa(alts, enun)}
+    return res
