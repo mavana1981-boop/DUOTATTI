@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_opcoes_ia.html" as oi with context %}
 {% from "_topicos.html" import opcoes %}
 {% block titulo %}Gabarito{% endblock %}
 {% block conteudo %}
@@ -27,8 +28,10 @@
     <h2>Caderno</h2>
     <p class="mut" style="margin-top:0">{{ c.questoes|selectattr('ok')|list|length }} de {{ c.total }} questões reconstruídas do PDF.</p>
     {% if ia_on and c.pdf_questoes %}
-    <form method="post" action="{{ url_for('caderno_ia', cid=c.id) }}" style="margin-top:6px">
-      <button class="btn azul mini">{{ 'Procurar o gabarito no PDF com IA' if not c.gabarito else 'Ler este caderno com IA' }}</button>
+    <form method="post" action="{{ url_for('caderno_ia', cid=c.id) }}" style="margin-top:6px"
+          onsubmit="const p=this.querySelector('[name=ia_provedor]:checked'); return !p || p.value!=='claude' || confirm('Usar o Claude (pago)? Isso usa créditos da sua conta da Anthropic.')">
+      {{ oi.opcoes_ia(c) }}
+      <button class="btn azul mini">{{ 'Procurar o gabarito no PDF com IA' if not c.gabarito else 'Começar a leitura com IA' }}</button>
     </form>
     <p class="hint">A IA só transcreve o gabarito que estiver escrito no PDF; ela não resolve as questões.</p>
     {% endif %}

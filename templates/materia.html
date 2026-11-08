@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_opcoes_ia.html" as oi with context %}
 {% from "_topicos.html" import opcoes, vinculos %}
 {% block titulo %}{{ m.nome }}{% endblock %}
 {% block css %}
@@ -162,7 +163,8 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
   <div class="row"><h2 style="margin:0">Questões</h2><span class="tag right">{{ m.cadernos|length }} caderno{{ '' if m.cadernos|length == 1 else 's' }}</span></div>
   <details class="box">
     <summary>+ Adicionar caderno de questões (opcional)</summary>
-    <form method="post" action="{{ url_for('caderno_novo', mid=m.id) }}" enctype="multipart/form-data">
+    <form method="post" action="{{ url_for('caderno_novo', mid=m.id) }}" enctype="multipart/form-data"
+          onsubmit="const p=this.querySelector('[name=ia_provedor]:checked'); return !p || p.value!=='claude' || confirm('Ler este caderno com o Claude (pago)? Isso usa créditos da sua conta da Anthropic.')">
       <label class="f">PDF das questões</label>
       <input type="file" name="pdf_questoes" accept="application/pdf,.pdf" required>
       <label class="f">Vincular a um item do edital ou assunto</label>
@@ -176,6 +178,7 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
       <textarea name="gabarito_texto" rows="3" placeholder="1-A 2-C 3-E …  ou  ACEBD…"></textarea>
       <label class="f">Título (opcional)</label>
       <input type="text" name="titulo" placeholder="Ex.: VUNESP 2023 — Crase">
+      {% if ia_gemini or ia_claude %}{{ oi.opcoes_ia(None, titulo='Leitura das questões com IA (escolha antes de enviar)') }}{% endif %}
       <div style="margin-top:14px"><button class="btn azul">Criar caderno</button></div>
     </form>
   </details>

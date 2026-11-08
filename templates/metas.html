@@ -66,6 +66,8 @@
     {% if ia.gemini %}
     <form method="post" action="{{ url_for('cadernos_ia_todos') }}" style="margin-bottom:16px"
           onsubmit="return confirm('Ler com o Gemini todos os cadernos que ainda não foram lidos? O Claude não será usado.')">
+      <label class="f">O que a IA deve ler</label>
+      <select name="ia_escopo" style="margin-bottom:8px">{% for k, v in escopos.items() %}<option value="{{ k }}" {{ 'selected' if k == 'todas' }}>{{ v }}</option>{% endfor %}</select>
       <button class="btn azul mini">Ler todos os cadernos com o Gemini</button>
     </form>
     {% endif %}

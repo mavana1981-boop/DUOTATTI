@@ -547,14 +547,16 @@ def _partes(pags, passo):
 
 
 def extrair(pdf_bytes, progresso=None, com_gabarito=False, esperadas=None, somente=None,
-            provedor="gemini", salvar=None, batida=None, uso=None):
+            provedor="gemini", salvar=None, batida=None, uso=None, todas_paginas=False):
     """Retorna {numero: {"fonte","apoio","enunciado","alternativas","ok"}} lendo o PDF com o Claude.
     esperadas: números de questão do gabarito (ajudam a conferir se alguma ficou para trás).
     somente: só estas questões precisam da IA (o resto já foi lido pelo leitor gratuito).
     Com com_gabarito=True, retorna (questoes, gabarito) — o gabarito só é transcrito se estiver escrito no PDF.
     provedor: "gemini" (padrão, barato) ou "claude" (só com autorização no app).
     salvar(parcial): chamado depois de cada parte com o que já foi lido (para continuar de onde parou).
-    uso: dict que recebe o consumo de tokens ({"entrada","saida","chamadas"}), mesmo se der erro."""
+    uso: dict que recebe o consumo de tokens ({"entrada","saida","chamadas"}), mesmo se der erro.
+    todas_paginas: envia TODAS as páginas do caderno (mesmo com `somente`), em vez de só as páginas
+    onde o leitor gratuito achou as questões — mais seguro em PDF de duas colunas."""
     lt = _Leitor(pdf_bytes, com_gabarito, provedor, batida)
     if uso is not None:
         lt.uso = uso
@@ -563,7 +565,7 @@ def extrair(pdf_bytes, progresso=None, com_gabarito=False, esperadas=None, somen
     somente = sorted(set(somente or [])) or None
     lt.esperadas_todas = esperadas
     passo = max(1, int(os.environ.get("IA_PAGINAS_POR_PARTE", "6")))
-    pags = _paginas_alvo(lt, somente) if somente else None
+    pags = _paginas_alvo(lt, somente) if somente and not todas_paginas else None
     if pags is None:
         pags = list(range(lt.n_pag))
         lt.mapear_paginas(esperadas)
