@@ -55,9 +55,35 @@
 {% if ia_lendo %}
 <section class="qz-card inicio" id="tela-ia">
   <img src="{{ url_for('static', filename='avatar/feliz.png') }}" alt="">
-  <h2>Estou lendo as questões com IA…</h2>
+  <h2>Estou lendo as questões com {{ 'o Claude (autorizado)' if c.ia_provedor == 'claude' else 'o Gemini' }}…</h2>
   <p class="mut" id="ia-msg">{{ c.ia_msg or 'Na fila…' }}</p>
   <p class="hint">Cadernos grandes levam alguns minutos. Esta página atualiza sozinha quando terminar.</p>
+</section>
+{% endif %}
+{% if c.ia_status == 'autorizar' and not ia_lendo %}
+<section class="box" style="margin:0 0 12px;border-color:var(--warn,#d89b00)">
+  <b>A leitura com IA precisa de uma decisão</b>
+  <p style="margin:6px 0 10px">{{ c.ia_msg }}</p>
+  {% if eh_admin %}
+  <div class="row" style="gap:8px;flex-wrap:wrap">
+    {% if ia_gemini %}
+    <form method="post" action="{{ url_for('caderno_ia_continuar', cid=c.id) }}" style="margin:0">
+      <button class="btn azul mini">Tentar de novo com o Gemini (grátis/barato)</button>
+    </form>
+    {% endif %}
+    {% if ia_claude %}
+    <form method="post" action="{{ url_for('caderno_ia_claude', cid=c.id) }}" style="margin:0"
+          onsubmit="return confirm('Autorizar o Claude (pago) a ler as questões incompletas deste caderno? Isso usa créditos da sua conta da Anthropic.')">
+      <button class="btn ouro mini">Autorizar o Claude (pago)</button>
+    </form>
+    {% endif %}
+    <form method="post" action="{{ url_for('caderno_ia_deixar', cid=c.id) }}" style="margin:0">
+      <button class="btn claro mini">Deixar assim</button>
+    </form>
+  </div>
+  {% else %}
+  <p class="hint" style="margin:0">Aguardando o administrador decidir. Você já pode resolver as questões que estão prontas.</p>
+  {% endif %}
 </section>
 {% endif %}
 {% if c.ia_status == 'erro' %}
@@ -81,7 +107,7 @@
   <p class="hint" style="margin-top:14px">{{ reconstruidas }} de {{ numeros|length }} questões foram reconstruídas do PDF. As demais aparecem só com as letras A–E.
     {% if ia_on %}Use <b>Ler este caderno com IA</b> (Opções do caderno, abaixo) para melhorar.{% endif %}</p>
   {% elif c.ia_status == 'ok' %}
-  <p class="hint" style="margin-top:14px">Questões lidas com IA · {{ c.ia_msg }}</p>
+  <p class="hint" style="margin-top:14px">Questões lidas com IA{% if c.ia_provedor %} ({{ 'Claude' if c.ia_provedor == 'claude' else 'Gemini' }}){% endif %} · {{ c.ia_msg }}</p>
   {% endif %}
 </section>
 
@@ -130,10 +156,16 @@
   <summary>Opções do caderno</summary>
   {% if ia_on %}
   <form method="post" action="{{ url_for('caderno_ia', cid=c.id) }}" style="margin:6px 0 10px">
-    <button class="btn azul mini" {{ 'disabled' if ia_lendo }}>{{ 'Ler de novo com IA' if c.ia_status == 'ok' else 'Ler este caderno com IA' }}</button>
+    <button class="btn azul mini" {{ 'disabled' if ia_lendo or not ia_gemini }}>{{ 'Ler de novo com o Gemini' if c.ia_status == 'ok' else 'Ler este caderno com o Gemini' }}</button>
   </form>
+  {% if eh_admin and ia_claude and c.ia_status != 'autorizar' %}
+  <form method="post" action="{{ url_for('caderno_ia_claude', cid=c.id) }}" style="margin:6px 0 10px"
+        onsubmit="return confirm('Autorizar o Claude (pago) a ler as questões incompletas deste caderno? Isso usa créditos da sua conta da Anthropic.')">
+    <button class="btn claro mini" {{ 'disabled' if ia_lendo }}>Usar o Claude (pago) nas incompletas</button>
+  </form>
+  {% endif %}
   {% else %}
-  <p class="hint">Leitura com IA desativada: configure <b>ANTHROPIC_API_KEY</b> no Railway para o app ler as questões com mais precisão.</p>
+  <p class="hint">Leitura com IA desativada: configure <b>GEMINI_API_KEY</b> no Railway para o app ler as questões com mais precisão.</p>
   {% endif %}
   <form method="post" action="{{ url_for('caderno_reprocessar', cid=c.id) }}" style="margin:6px 0 10px">
     <button class="btn claro mini">Reconstruir sem IA (leitor simples)</button>

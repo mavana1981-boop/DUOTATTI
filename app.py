@@ -2,6 +2,7 @@
 DUOTATTI — plataforma de estudos para o concurso de Escrevente Técnico Judiciário do TJSP.
 Flask + SQLAlchemy (Postgres no Railway / SQLite local).
 """
+import hashlib
 import io
 import math
 import json
@@ -139,6 +140,12 @@ class Caderno(db.Model):
     ia_status = db.Column(db.String(20))   # fila | lendo | ok | erro
     ia_msg = db.Column(db.String(300))
     ia_inicio = db.Column(db.DateTime)
+    ia_batida = db.Column(db.DateTime)        # último sinal de vida da leitura (para retomar se travar)
+    ia_provedor = db.Column(db.String(20))    # gemini | claude — IA usada (ou em uso) na leitura
+    ia_claude_ok = db.Column(db.Boolean, default=False)  # admin autorizou usar o Claude (pago) neste caderno
+    ia_parcial = deferred(db.Column(db.Text))  # questões já lidas pela IA (JSON) — continua de onde parou
+    ia_tokens = db.Column(db.Integer, default=0)  # tokens gastos na última leitura
+    pdf_hash = db.Column(db.String(64))       # assinatura do PDF: o mesmo PDF não é lido duas vezes
     questoes = db.relationship("Questao", backref="caderno", order_by="Questao.numero",
                                cascade="all, delete-orphan", lazy="select")
     tentativas = db.relationship("Tentativa", backref="caderno", order_by="Tentativa.feita_em",
@@ -452,7 +459,7 @@ def seed():
     db.session.commit()
 
 
-NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)"), ("aula", "ordem", "INTEGER"), ("tentativa", "finalizada", "BOOLEAN DEFAULT TRUE"), ("caderno", "ia_status", "VARCHAR(20)"), ("caderno", "ia_msg", "VARCHAR(300)"), ("caderno", "ia_inicio", "TIMESTAMP"), ("log_acesso", "detalhe", "VARCHAR(300)"), ("leitura", "usuario", "VARCHAR(60)"), ("tentativa", "usuario", "VARCHAR(60)")]
+NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)"), ("aula", "ordem", "INTEGER"), ("tentativa", "finalizada", "BOOLEAN DEFAULT TRUE"), ("caderno", "ia_status", "VARCHAR(20)"), ("caderno", "ia_msg", "VARCHAR(300)"), ("caderno", "ia_inicio", "TIMESTAMP"), ("log_acesso", "detalhe", "VARCHAR(300)"), ("leitura", "usuario", "VARCHAR(60)"), ("tentativa", "usuario", "VARCHAR(60)"), ("caderno", "ia_batida", "TIMESTAMP"), ("caderno", "ia_provedor", "VARCHAR(20)"), ("caderno", "ia_claude_ok", "BOOLEAN DEFAULT FALSE"), ("caderno", "ia_parcial", "TEXT"), ("caderno", "ia_tokens", "INTEGER DEFAULT 0"), ("caderno", "pdf_hash", "VARCHAR(64)")]
 
 
 def migrar(conn):
@@ -1570,6 +1577,17 @@ def _loop_lembretes():
                 verificar_lembretes()
         except Exception as e:  # noqa: BLE001
             app.logger.warning("lembretes: %s", e)
+        try:  # leituras com IA interrompidas (ex.: deploy no meio) continuam de onde pararam
+            with app.app_context():
+                retomar_leituras()
+        except Exception as e:  # noqa: BLE001
+            app.logger.warning("retomar leituras: %s", e)
+        finally:
+            try:
+                with app.app_context():
+                    db.session.remove()
+            except Exception:  # noqa: BLE001
+                pass
         _t.sleep(60)
 
 
@@ -1753,7 +1771,8 @@ def so_admin(f):
 def contexto_usuario():
     u = usuario_atual() if request.endpoint not in ("static",) else None
     alunos = Usuario.query.filter(Usuario.admin.isnot(True)).order_by(Usuario.login).all() if u and u.admin else []
-    return {"usuario": u, "alunos": alunos, "vendo": escopo() if u else None}
+    return {"usuario": u, "alunos": alunos, "vendo": escopo() if u else None, "eh_admin": bool(u and u.admin),
+            "ia_gemini": IA.gemini_disponivel(), "ia_claude": IA.claude_disponivel()}
 
 
 @app.post("/ver-como")
@@ -2132,57 +2151,188 @@ def montar_questoes(c, extra=None):
 
 
 # ---- Leitura com IA (fila em segundo plano) ------------------------------- #
+# Gemini é o leitor principal (barato). O Claude (pago) só entra quando o admin AUTORIZA no caderno.
+# O que já foi lido fica salvo em ia_parcial: se o servidor reiniciar ou a IA falhar, a leitura
+# continua de onde parou, sem pagar de novo pelo que já foi lido.
 _fila_ia = queue.Queue()
 _trabalhador = {"t": None}
+IA_TRAVADA = timedelta(minutes=15)  # sem sinal de vida por mais que isso = leitura interrompida
+
+
+def _carregar_parcial(c):
+    try:
+        return {int(k): v for k, v in json.loads(c.ia_parcial or "{}").items()}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _questoes_do_banco(c, so_ok=True):
+    res = {}
+    for q in Questao.query.filter_by(caderno_id=c.id).all():
+        if q.ok or not so_ok:
+            res[q.numero] = {"fonte": q.fonte or "", "apoio": q.apoio or "", "enunciado": q.enunciado or "",
+                             "alternativas": q.alternativas, "ok": bool(q.ok)}
+    return res
+
+
+def _hash_pdf(c):
+    if not c.pdf_hash and c.pdf_questoes:
+        c.pdf_hash = hashlib.sha256(c.pdf_questoes).hexdigest()
+        db.session.commit()
+    return c.pdf_hash
+
+
+def _do_mesmo_pdf(c):
+    """Questões já lidas pela IA de outro caderno com exatamente o mesmo PDF (sem custo)."""
+    h = _hash_pdf(c)
+    if not h:
+        return {}
+    for o in Caderno.query.filter(Caderno.pdf_hash == h, Caderno.id != c.id,
+                                  Caderno.ia_status.in_(("ok", "autorizar"))).all():
+        res = {n: q for n, q in _questoes_do_banco(o).items() if n in c.gabarito}
+        if res:
+            return res
+    return {}
+
+
+def _fmt_tokens(n):
+    n = int(n or 0)
+    return f"{n / 1000:.0f} mil tokens" if n >= 1000 else f"{n} tokens"
 
 
 def _processar_ia(cid):
     c = db.session.get(Caderno, cid)
     if not c or not c.pdf_questoes:
         return
+    if c.ia_status == "lendo" and c.ia_batida and agora() - c.ia_batida < IA_TRAVADA:
+        return  # outro processo já está lendo este caderno
+    if c.ia_claude_ok and IA.claude_disponivel():
+        prov = "claude"
+    elif IA.gemini_disponivel():
+        prov = "gemini"
+    else:
+        c.ia_status = "autorizar" if IA.claude_disponivel() else "erro"
+        c.ia_msg = ("O Gemini não está configurado (falta GEMINI_API_KEY no Railway). "
+                    "Para ler com o Claude (pago), o administrador precisa autorizar.")
+        db.session.commit()
+        return
     sem_gabarito = not c.gabarito
-    c.ia_status, c.ia_inicio, c.ia_msg = "lendo", agora(), "Começando a leitura…"
+    c.ia_status, c.ia_provedor, c.ia_inicio, c.ia_batida = "lendo", prov, agora(), agora()
+    c.ia_msg = f"Começando a leitura com {IA.nome(prov)}…"
     db.session.commit()
+    uso = {}
+    parcial = _carregar_parcial(c)
+
+    def batida():
+        try:
+            Caderno.query.filter_by(id=cid).update({"ia_batida": agora()})
+            db.session.commit()
+        except Exception:  # noqa: BLE001
+            db.session.rollback()
 
     def progresso(k, total):
-        c.ia_msg = (k if isinstance(k, str) else f"Lendo parte {k} de {total}…")[:300]
+        cc = db.session.get(Caderno, cid)
+        cc.ia_msg = (f"{IA.nome(prov)}: " + (k if isinstance(k, str) else f"lendo parte {k} de {total}…"))[:300]
+        cc.ia_batida = agora()
         db.session.commit()
 
+    def salvar(lidas):
+        junto = dict(parcial)
+        for n, q in lidas.items():
+            if q.get("ok") or n not in junto:
+                junto[n] = q
+        cc = db.session.get(Caderno, cid)
+        cc.ia_parcial = json.dumps({str(n): q for n, q in junto.items()}, ensure_ascii=False)
+        cc.ia_batida = agora()
+        cc.ia_tokens = uso.get("entrada", 0) + uso.get("saida", 0)
+        db.session.commit()
+
+    res = {}
     try:
         if sem_gabarito:
-            res, gab = IA.extrair(c.pdf_questoes, progresso, com_gabarito=True)
+            res, gab = IA.extrair(c.pdf_questoes, progresso, com_gabarito=True, provedor=prov, batida=batida, uso=uso)
             nums = [n for n in res if res[n]["ok"]]
             # aceita se cobrir pelo menos metade das questões lidas (evita respostas soltas)
             if len(gab) < 3 or (nums and len([n for n in nums if n in gab]) < len(nums) / 2):
                 c = db.session.get(Caderno, cid)
                 c.ia_status = "erro"
                 c.ia_msg = "Não encontrei o gabarito escrito no PDF. Digite-o em “Corrigir gabarito”."
+                c.ia_tokens = uso.get("entrada", 0) + uso.get("saida", 0)
                 db.session.commit()
                 return
             c = db.session.get(Caderno, cid)
             c.gabarito = gab
             db.session.commit()
         else:
+            if not parcial and prov == "gemini":
+                parcial = _do_mesmo_pdf(c)  # o mesmo PDF já foi lido em outro caderno: reaproveita
+                if parcial:
+                    salvar({})
             somente = None
-            if not IA.modo_completo():  # economia: a IA só lê o que o leitor gratuito não montou
+            if not IA.modo_completo() or parcial or prov == "claude":
+                # economia: a IA só lê o que o leitor gratuito (e as leituras anteriores) não montaram
                 base = ler_questoes_sem_ia(c)
+                for n, q in parcial.items():
+                    if q.get("ok"):
+                        base[n] = q
                 somente = [n for n in c.gabarito if precisa_ia(base.get(n, {}))]
             if somente == []:
                 res = {}
             else:
-                res = IA.extrair(c.pdf_questoes, progresso, esperadas=list(c.gabarito), somente=somente)
-        ok = montar_questoes(c, extra=res)
-        lidas = sum(1 for n, q in res.items() if n in c.gabarito and q["ok"])
-        c = db.session.get(Caderno, cid)
-        c.ia_status = "ok"
-        faltam = [str(n) for n in sorted(c.gabarito) if not (res.get(n) or {}).get("ok")]
-        c.ia_msg = (f"{ok} de {c.total} questões prontas ({lidas} lidas pela IA)."
-                    + (f" Incompletas: {', '.join(faltam[:20])}{'…' if len(faltam) > 20 else ''}." if faltam else ""))[:300]
+                res = IA.extrair(c.pdf_questoes, progresso, esperadas=list(c.gabarito), somente=somente,
+                                 provedor=prov, salvar=salvar, batida=batida, uso=uso)
+        _concluir_ia(cid, prov, parcial, res, uso)
     except Exception as e:  # noqa: BLE001
         db.session.rollback()
         c = db.session.get(Caderno, cid)
-        c.ia_status = "erro"
-        c.ia_msg = f"Erro na leitura com IA: {e.__class__.__name__}: {str(e)[:200]}"
+        # monta o que já foi lido, para o caderno ficar usável
+        try:
+            ja = _carregar_parcial(c)
+            if ja and c.gabarito:
+                montar_questoes(c, extra=ja)
+                c = db.session.get(Caderno, cid)
+        except Exception:  # noqa: BLE001
+            db.session.rollback()
+            c = db.session.get(Caderno, cid)
+        c.ia_tokens = uso.get("entrada", 0) + uso.get("saida", 0)
+        motivo = str(e)[:150] if isinstance(e, IA.IAFalhou) else f"{e.__class__.__name__}: {str(e)[:120]}"
+        if prov == "gemini":
+            c.ia_status = "autorizar"
+            c.ia_msg = (f"O Gemini parou: {motivo}. O que já foi lido está salvo. "
+                        "Tente de novo com o Gemini (continua de onde parou) ou autorize o Claude (pago).")[:300]
+        else:
+            c.ia_status = "erro"
+            c.ia_msg = f"Erro na leitura com o Claude: {motivo}. O que já foi lido está salvo."[:300]
+        db.session.commit()
+
+
+def _concluir_ia(cid, prov, parcial, res, uso):
+    c = db.session.get(Caderno, cid)
+    tudo = dict(parcial)
+    for n, q in (res or {}).items():
+        if q.get("ok") or n not in tudo:
+            tudo[n] = q
+    ok = montar_questoes(c, extra=tudo)
+    c = db.session.get(Caderno, cid)
+    c.ia_parcial = json.dumps({str(n): q for n, q in tudo.items()}, ensure_ascii=False)
+    c.ia_tokens = uso.get("entrada", 0) + uso.get("saida", 0)
+    c.ia_claude_ok = False  # a autorização vale só para uma leitura
+    db.session.commit()
+    finais = {q.numero: q.ok for q in Questao.query.filter_by(caderno_id=c.id).all()}
+    faltam = [n for n in sorted(c.gabarito) if not finais.get(n)]
+    lidas = sum(1 for n, q in (res or {}).items() if n in c.gabarito and q.get("ok"))
+    gasto = f" · {_fmt_tokens(c.ia_tokens)}" if c.ia_tokens else ""
+    txt = (f"{ok} de {c.total} questões prontas ({lidas} lidas agora pelo {IA.nome(prov)}{gasto})." if lidas or gasto
+           else f"{ok} de {c.total} questões prontas (sem custo de IA: nada novo para ler).")
+    lista = ", ".join(map(str, faltam[:20])) + ("…" if len(faltam) > 20 else "")
+    if faltam and prov == "gemini" and IA.claude_disponivel():
+        c.ia_status = "autorizar"
+        txt += f" O Gemini não completou {len(faltam)}: {lista}. Autorize o Claude (pago) só para elas, ou deixe assim."
+    else:
+        c.ia_status = "ok"
+        if faltam:
+            txt += f" Incompletas: {lista}."
+    c.ia_msg = txt[:300]
     db.session.commit()
 
 
@@ -2198,52 +2348,131 @@ def _loop_ia():
                 db.session.remove()
 
 
-def enfileirar_ia(c):
-    if not IA.disponivel():
-        return False
-    c.ia_status, c.ia_msg, c.ia_inicio = "fila", "Na fila para leitura com IA…", agora()
-    db.session.commit()
+def _colocar_na_fila(cid):
     if _trabalhador["t"] is None or not _trabalhador["t"].is_alive():
         _trabalhador["t"] = threading.Thread(target=_loop_ia, daemon=True)
         _trabalhador["t"].start()
-    _fila_ia.put(c.id)
+    _fila_ia.put(cid)
+
+
+def enfileirar_ia(c, continuar=False, claude=False):
+    """Põe o caderno na fila. continuar=True mantém o que já foi lido; claude=True usa o Claude (autorizado)."""
+    if claude:
+        if not IA.claude_disponivel():
+            return False
+    elif not IA.gemini_disponivel():
+        if IA.claude_disponivel():  # só o Claude configurado: pede autorização em vez de gastar
+            c.ia_status, c.ia_provedor = "autorizar", "claude"
+            c.ia_msg = "O Gemini não está configurado (falta GEMINI_API_KEY no Railway). Autorize o Claude (pago) para ler este caderno."
+            db.session.commit()
+        return False
+    if claude:
+        # o Claude só relê o que ainda está incompleto: guarda o que já está pronto
+        prontas = _carregar_parcial(c)
+        prontas.update(_questoes_do_banco(c))
+        c.ia_parcial = json.dumps({str(n): q for n, q in prontas.items()}, ensure_ascii=False)
+    elif not continuar:
+        c.ia_parcial = None
+    c.ia_claude_ok = bool(claude)
+    c.ia_provedor = "claude" if claude else "gemini"
+    c.ia_status, c.ia_inicio, c.ia_batida = "fila", agora(), agora()
+    c.ia_msg = f"Na fila para leitura com o {IA.nome(c.ia_provedor)}…"
+    db.session.commit()
+    _colocar_na_fila(c.id)
     return True
 
 
 def ia_ocupada(c):
-    """Leitura em andamento (ignora leituras 'presas' há mais de 30 min, ex.: servidor reiniciou)."""
-    return c.ia_status in ("fila", "lendo") and c.ia_inicio and (agora() - c.ia_inicio) < timedelta(minutes=30)
+    """Leitura em andamento (sem sinal de vida há mais de 15 min = interrompida, ex.: servidor reiniciou)."""
+    marca = c.ia_batida or c.ia_inicio
+    return c.ia_status in ("fila", "lendo") and marca and (agora() - marca) < IA_TRAVADA
+
+
+def retomar_leituras():
+    """Leituras interrompidas (servidor reiniciou no meio) voltam para a fila e continuam de onde pararam."""
+    for c in Caderno.query.filter(Caderno.ia_status.in_(("fila", "lendo"))).all():
+        if ia_ocupada(c):
+            continue
+        marca = c.ia_batida or c.ia_inicio
+        n = (Caderno.query.filter(Caderno.id == c.id, Caderno.ia_status.in_(("fila", "lendo")),
+                                  (Caderno.ia_batida == marca) if c.ia_batida else Caderno.ia_batida.is_(None))
+             .update({"ia_status": "fila", "ia_batida": agora(),
+                      "ia_msg": "Retomando a leitura de onde parou…"}, synchronize_session=False))
+        db.session.commit()
+        if n:  # só um processo "pega" o caderno
+            _colocar_na_fila(c.id)
+
+
+def _so_admin_autoriza():
+    if not eh_admin():
+        flash("Só o administrador pode autorizar o uso do Claude (pago).", "erro")
+        return False
+    return True
 
 
 @app.post("/caderno/<int:cid>/ia")
 def caderno_ia(cid):
     c = db.get_or_404(Caderno, cid)
     if not IA.disponivel():
-        flash("A IA não está configurada (falta ANTHROPIC_API_KEY no Railway).", "erro")
+        flash("A IA não está configurada (falta GEMINI_API_KEY no Railway).", "erro")
     elif not ia_ocupada(c):
-        enfileirar_ia(c)
-        flash("A Tatti está lendo este caderno com IA. Pode levar alguns minutos.", "ok")
+        if enfileirar_ia(c):
+            flash("A Tatti está lendo este caderno com o Gemini. Pode levar alguns minutos.", "ok")
+        else:
+            flash(c.ia_msg or "Não foi possível iniciar a leitura.", "erro")
+    return redirect(url_for("caderno_resolver", cid=cid))
+
+
+@app.post("/caderno/<int:cid>/ia/continuar")
+def caderno_ia_continuar(cid):
+    """Tenta de novo com o Gemini, aproveitando o que já foi lido."""
+    c = db.get_or_404(Caderno, cid)
+    if not ia_ocupada(c) and enfileirar_ia(c, continuar=True):
+        flash("Tentando de novo com o Gemini, a partir de onde parou.", "ok")
+    return redirect(url_for("caderno_resolver", cid=cid))
+
+
+@app.post("/caderno/<int:cid>/ia/claude")
+def caderno_ia_claude(cid):
+    c = db.get_or_404(Caderno, cid)
+    if _so_admin_autoriza() and not ia_ocupada(c):
+        if enfileirar_ia(c, claude=True):
+            acao(f"Autorizou o Claude (pago) no caderno: {c.titulo}")
+            flash("Autorizado: o Claude vai ler só as questões que ainda estão incompletas.", "ok")
+        else:
+            flash("O Claude não está configurado (falta ANTHROPIC_API_KEY no Railway).", "erro")
+    return redirect(url_for("caderno_resolver", cid=cid))
+
+
+@app.post("/caderno/<int:cid>/ia/deixar")
+def caderno_ia_deixar(cid):
+    c = db.get_or_404(Caderno, cid)
+    if c.ia_status == "autorizar":
+        c.ia_status = "ok"
+        c.ia_msg = ((c.ia_msg or "").split(" O Gemini")[0] + " Sem o Claude: as incompletas ficam como estão.")[:300]
+        db.session.commit()
     return redirect(url_for("caderno_resolver", cid=cid))
 
 
 @app.post("/cadernos/ia-todos")
 def cadernos_ia_todos():
-    if not IA.disponivel():
-        flash("A IA não está configurada (falta ANTHROPIC_API_KEY no Railway).", "erro")
+    if not IA.gemini_disponivel():
+        flash("O Gemini não está configurado (falta GEMINI_API_KEY no Railway).", "erro")
         return redirect(url_for("metas"))
     n = 0
     for c in Caderno.query.order_by(Caderno.id).all():
-        if c.gabarito and c.ia_status != "ok" and not ia_ocupada(c):
-            enfileirar_ia(c)
+        if c.gabarito and c.ia_status not in ("ok", "autorizar") and not ia_ocupada(c):
+            enfileirar_ia(c, continuar=True)
             n += 1
-    flash(f"{n} caderno(s) na fila de leitura com IA." if n else "Todos os cadernos já foram lidos com IA.", "ok")
+    flash(f"{n} caderno(s) na fila de leitura com o Gemini." if n else "Todos os cadernos já foram lidos com IA.", "ok")
     return redirect(url_for("metas"))
 
 
 @app.get("/api/caderno/<int:cid>/ia")
 def api_caderno_ia(cid):
     c = db.get_or_404(Caderno, cid)
-    return jsonify(ok=True, status=c.ia_status, msg=c.ia_msg, ocupada=bool(ia_ocupada(c)))
+    return jsonify(ok=True, status=c.ia_status, msg=c.ia_msg, ocupada=bool(ia_ocupada(c)),
+                   ia=IA.nome(c.ia_provedor) if c.ia_provedor else "")
 
 
 @app.post("/materia/<int:mid>/cadernos")
@@ -2349,7 +2578,7 @@ def caderno_resolver(cid):
                     enfileirar_ia(c)
                 flash(f"Gabarito encontrado no PDF: {len(gab)} questões.", "ok")
                 return redirect(url_for("caderno_resolver", cid=cid))
-            if IA.disponivel() and c.pdf_questoes and c.ia_status != "erro":
+            if IA.disponivel() and c.pdf_questoes and c.ia_status not in ("erro", "autorizar"):
                 enfileirar_ia(c)
         if ia_ocupada(c):
             return render_template("resolver.html", c=c, m=c.materia, numeros=[], reconstruidas=0, aberta=None,
@@ -2921,10 +3150,13 @@ def metas():
         flash("Metas salvas. A Tatti já está de olho!", "ok")
         return redirect(url_for("metas"))
     cads = Caderno.query.all()
-    ia_info = {"on": IA.disponivel(), "modelo": IA.modelo(), "total": len(cads),
-               "ok": sum(1 for c in cads if c.ia_status == "ok"),
-               "lendo": sum(1 for c in cads if ia_ocupada(c)),
-               "erro": sum(1 for c in cads if c.ia_status == "erro")}
+    lendo = [c for c in cads if ia_ocupada(c)]
+    ia_info = {"on": IA.disponivel(), "gemini": IA.gemini_disponivel(), "claude": IA.claude_disponivel(),
+               "desc_gemini": IA.descricao("gemini"), "desc_claude": IA.descricao("claude"),
+               "total": len(cads), "ok": sum(1 for c in cads if c.ia_status == "ok"),
+               "lendo": len(lendo), "lendo_claude": sum(1 for c in lendo if c.ia_provedor == "claude"),
+               "erro": sum(1 for c in cads if c.ia_status == "erro"),
+               "autorizar": [c for c in cads if c.ia_status == "autorizar"]}
     return render_template("metas.html", h=calcular_humor(), p=plano_do_dia(), ia=ia_info)
 
 

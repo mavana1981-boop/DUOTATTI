@@ -23,7 +23,8 @@ python app.py        # http://localhost:5000  (usa SQLite: duotatti.db)
 3. Variáveis recomendadas:
    - `SECRET_KEY` — qualquer texto longo e aleatório.
    - `MAX_UPLOAD_MB` — (opcional) limite de upload, padrão 80.
-   - `ANTHROPIC_API_KEY` — (recomendado) ativa a leitura das questões com IA (Claude): o app lê cada PDF de questões e reconstrói enunciado, alternativas, textos de apoio e descrição de figuras. Sem ela, usa o leitor simples.
+   - `GEMINI_API_KEY` — (recomendado) ativa a leitura das questões com IA pelo Gemini (Google AI Studio), a opção barata: o app lê cada PDF de questões e reconstrói enunciado, alternativas, textos de apoio e descrição de figuras. Sem ela, usa o leitor simples. Modelos: `GEMINI_MODEL_LEITURA` (padrão `gemini-2.5-flash-lite`) e `GEMINI_MODEL` (conferência, padrão `gemini-3.1-flash-lite`).
+   - `ANTHROPIC_API_KEY` — (opcional) Claude, usado **só quando o administrador autoriza** no caderno (quando o Gemini falha ou deixa questões incompletas).
    - `ANTHROPIC_MODEL` — (opcional) modelo da IA, padrão `claude-sonnet-5-5`.
 
 Os PDFs ficam salvos **dentro do Postgres**, então não se perdem a cada deploy (o disco do Railway é efêmero).

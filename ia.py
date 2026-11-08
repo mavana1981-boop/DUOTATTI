@@ -1,4 +1,4 @@
-"""Leitura de cadernos de questões com IA (Claude API) — leitura criteriosa, com conferência.
+"""Leitura de cadernos de questões com IA (Gemini; Claude só com autorização) — leitura criteriosa, com conferência.
 
 Como funciona:
 0. ECONOMIA: o leitor gratuito por regras (questoes.py) roda antes, no app. A IA só recebe as
@@ -27,12 +27,24 @@ Configuração (variáveis de ambiente no Railway):
   IA_PAGINAS_POR_PARTE páginas por chamada (padrão: 6)
   IA_MODO              "completo" para a IA ler o caderno inteiro, ignorando o leitor gratuito
   IA_RODADAS_CONFERENCIA rodadas de releitura do que faltou (padrão: 2)
+
+PROVEDORES: o Gemini (Google) é o leitor principal, por ser muito mais barato. O Claude só é usado
+quando o administrador AUTORIZA no app (caderno com status "autorizar").
+  GEMINI_API_KEY       chave do Google AI Studio (também aceita GOOGLE_API_KEY)
+  GEMINI_MODEL_LEITURA modelo da primeira leitura (padrão: gemini-2.5-flash-lite)
+  GEMINI_MODEL         modelo da conferência (padrão: gemini-3.1-flash-lite)
+  Se um modelo for desativado pelo Google (erro 404), o app tenta os próximos da lista GEMINI_RESERVA.
+  Erros temporários (limite de uso 429, servidor 5xx, rede) são repetidos com espera por até
+  IA_ESPERA_MAX_MIN minutos (padrão: 20) antes de desistir — e o que já foi lido fica salvo.
 """
 import base64
 import io
 import json
 import os
 import re
+import time
+import urllib.error
+import urllib.request
 
 from pypdf import PdfReader, PdfWriter
 
@@ -87,21 +99,65 @@ GABARITO: este caderno chegou sem gabarito identificado. Se as páginas (princip
 NUNCA resolva as questões nem deduza respostas. Se o gabarito não estiver escrito nas páginas, use "gabarito": {}.
 """
 
+GEMINI_LEITURA_PADRAO = "gemini-2.5-flash-lite"
+GEMINI_CONFERENCIA_PADRAO = "gemini-3.1-flash-lite"
+GEMINI_RESERVA = ["gemini-2.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
+GEMINI_MAX_SAIDA = 65536
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent"
+
+
+class IAFalhou(Exception):
+    """A IA não conseguiu responder mesmo depois de várias tentativas (o que já foi lido continua salvo)."""
+
+
 RX_PEDE_APOIO = re.compile(
     r"(?i)\b(?:d?[on]o?s?\s+texto|texto\s+(?:acima|apresentado|lido|i{1,3}\b)|d[ao]\s+(?:tirinha|charge|poema|crônica|cronica|trecho|fragmento|quadrinho)"
     r"|segundo\s+o\s+(?:autor|narrador|texto)|(?:primeiro|segundo|terceiro|quarto|último|ultimo)\s+parágrafo|\bverso)")
 
 
-def disponivel():
+def chave_gemini():
+    return (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "").strip()
+
+
+def gemini_disponivel():
+    return bool(chave_gemini())
+
+
+def claude_disponivel():
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
-def modelo():
+def disponivel():
+    return gemini_disponivel() or claude_disponivel()
+
+
+def modelo(provedor="claude"):
+    if provedor == "gemini":
+        return os.environ.get("GEMINI_MODEL") or GEMINI_CONFERENCIA_PADRAO
     return os.environ.get("ANTHROPIC_MODEL") or MODELO_PADRAO
 
 
-def modelo_leitura():
+def modelo_leitura(provedor="claude"):
+    if provedor == "gemini":
+        return os.environ.get("GEMINI_MODEL_LEITURA") or GEMINI_LEITURA_PADRAO
     return os.environ.get("ANTHROPIC_MODEL_LEITURA") or MODELO_LEITURA_PADRAO
+
+
+def nome(provedor):
+    return {"gemini": "Gemini", "claude": "Claude"}.get(provedor, provedor or "")
+
+
+def descricao(provedor):
+    """Ex.: 'Gemini (gemini-2.5-flash-lite / gemini-3.1-flash-lite)'."""
+    a, b = modelo_leitura(provedor), modelo(provedor)
+    return f"{nome(provedor)} ({a}" + (f" / {b})" if b != a else ")")
+
+
+def espera_max():
+    try:
+        return max(1.0, float(os.environ.get("IA_ESPERA_MAX_MIN", "20"))) * 60
+    except ValueError:
+        return 1200.0
 
 
 def modo_completo():
@@ -138,10 +194,14 @@ def _int(v):
 
 
 class _Leitor:
-    def __init__(self, pdf_bytes, com_gabarito=False):
-        import anthropic
-
-        self.cliente = anthropic.Anthropic(max_retries=3, timeout=900)
+    def __init__(self, pdf_bytes, com_gabarito=False, provedor="gemini", batida=None):
+        self.provedor = provedor
+        self.batida = batida or (lambda: None)   # "ainda estou vivo" (para o app não achar que travou)
+        self.uso = {"entrada": 0, "saida": 0, "chamadas": 0}
+        self._gem_ruins = set()                  # modelos do Gemini que o Google desativou
+        if provedor == "claude":
+            import anthropic
+            self.cliente = anthropic.Anthropic(max_retries=3, timeout=900)
         self.reader = PdfReader(io.BytesIO(pdf_bytes))
         self.n_pag = len(self.reader.pages)
         self.com_gabarito = com_gabarito
@@ -158,6 +218,10 @@ class _Leitor:
     # -- chamada à API ------------------------------------------------------ #
     def _chamar(self, idxs, prompt, max_tokens=MAX_TOKENS, mod=None):
         dados = base64.standard_b64encode(_pdf_paginas(self.reader, idxs)).decode()
+        self.batida()
+        self.uso["chamadas"] += 1
+        if self.provedor == "gemini":
+            return self._chamar_gemini(dados, prompt, max_tokens, mod or modelo("gemini"))
         with self.cliente.messages.stream(
             model=mod or modelo(), max_tokens=max_tokens,
             messages=[{"role": "user", "content": [
@@ -167,7 +231,78 @@ class _Leitor:
         ) as stream:
             msg = stream.get_final_message()
         texto = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        u = getattr(msg, "usage", None)
+        if u is not None:
+            self.uso["entrada"] += getattr(u, "input_tokens", 0) or 0
+            self.uso["saida"] += getattr(u, "output_tokens", 0) or 0
         return texto, getattr(msg, "stop_reason", "")
+
+    # -- Gemini (API REST, sem biblioteca extra) ------------------------------ #
+    def _modelos_gemini(self, preferido):
+        lista = [preferido] + [m for m in GEMINI_RESERVA if m != preferido]
+        return [m for m in lista if m not in self._gem_ruins]
+
+    def _chamar_gemini(self, dados_b64, prompt, max_tokens, mod):
+        corpo = json.dumps({
+            "contents": [{"role": "user", "parts": [
+                {"inline_data": {"mime_type": "application/pdf", "data": dados_b64}},
+                {"text": prompt}]}],
+            "generationConfig": {"responseMimeType": "application/json", "temperature": 0,
+                                 "maxOutputTokens": min(max_tokens, GEMINI_MAX_SAIDA)},
+        }).encode()
+        inicio, tentativa, ultimo, esperado = time.time(), 0, "", 0.0
+        while True:
+            modelos = self._modelos_gemini(mod)
+            if not modelos:
+                raise IAFalhou("nenhum modelo do Gemini disponível para esta chave (" + ultimo + ")")
+            m = modelos[0]
+            req = urllib.request.Request(GEMINI_URL.format(m=m), data=corpo, method="POST", headers={
+                "Content-Type": "application/json", "x-goog-api-key": chave_gemini()})
+            espera = None
+            try:
+                with urllib.request.urlopen(req, timeout=600) as r:
+                    resp = json.loads(r.read().decode("utf-8"))
+                return self._resposta_gemini(resp)
+            except urllib.error.HTTPError as e:
+                try:
+                    detalhe = e.read().decode("utf-8", "replace")
+                except Exception:  # noqa: BLE001
+                    detalhe = ""
+                ultimo = f"HTTP {e.code} {detalhe[:200]}"
+                if e.code == 404 or (e.code == 400 and "model" in detalhe.lower() and "not" in detalhe.lower()):
+                    self._gem_ruins.add(m)          # modelo desativado: tenta o próximo da lista
+                    continue
+                if e.code in (401, 403) or (e.code == 400 and "api key" in detalhe.lower()):
+                    raise IAFalhou("a chave do Gemini foi recusada (" + ultimo + ")") from e
+                if e.code not in (408, 409, 429, 500, 502, 503, 504):
+                    raise IAFalhou("o Gemini recusou o pedido (" + ultimo + ")") from e
+                mt = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', detalhe)
+                if mt:
+                    espera = float(mt.group(1)) + 1
+            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+                ultimo = f"rede: {e.__class__.__name__}"
+            # erro temporário (limite por minuto, servidor ocupado, rede): espera e tenta de novo
+            tentativa += 1
+            espera = espera or min(90.0, 5.0 * (2 ** min(tentativa, 5)))
+            if max(time.time() - inicio, esperado) + espera > espera_max():
+                raise IAFalhou(f"o Gemini não respondeu depois de {tentativa} tentativas ({ultimo})")
+            self.batida()
+            esperado += espera
+            time.sleep(espera)
+
+    def _resposta_gemini(self, resp):
+        u = resp.get("usageMetadata") or {}
+        self.uso["entrada"] += u.get("promptTokenCount", 0) or 0
+        self.uso["saida"] += (u.get("candidatesTokenCount", 0) or 0) + (u.get("thoughtsTokenCount", 0) or 0)
+        cands = resp.get("candidates") or []
+        if not cands:
+            motivo = (resp.get("promptFeedback") or {}).get("blockReason") or "resposta vazia"
+            return "", motivo
+        c = cands[0]
+        partes = (c.get("content") or {}).get("parts") or []
+        texto = "".join(p.get("text", "") for p in partes if not p.get("thought"))
+        fim = c.get("finishReason") or ""
+        return texto, ("max_tokens" if fim == "MAX_TOKENS" else fim)
 
     def _chamar_json(self, idxs, prompt, max_tokens=MAX_TOKENS, mod=None):
         """(dados, cortado). Tenta de novo uma vez se o JSON vier inválido."""
@@ -203,14 +338,14 @@ class _Leitor:
             total=len(idxs), ini=p_ini, fim=p_fim, contexto=contexto, esperadas=esp, regras=REGRAS,
             extra_gabarito=EXTRA_GABARITO if self.com_gabarito else "",
             formato=FORMATO.format(campo_gabarito=',\n "gabarito": {}' if self.com_gabarito else ""))
-        dados, cortado = self._chamar_json(idxs, prompt, mod=modelo_leitura())
+        dados, cortado = self._chamar_json(idxs, prompt, mod=modelo_leitura(self.provedor))
         if cortado:
             if fim - ini > 1:  # divide ao meio e lê cada metade
                 meio = (ini + fim) // 2
                 self.ler_parte(ini, meio, esperadas, somente)
                 self.ler_parte(meio, fim, esperadas, somente)
                 return
-            dados2, _ = self._chamar_json(idxs, prompt, MAX_TOKENS_GRANDE, mod=modelo_leitura())
+            dados2, _ = self._chamar_json(idxs, prompt, MAX_TOKENS_GRANDE, mod=modelo_leitura(self.provedor))
             dados = dados2 or dados
         self.incorporar(dados, (max(0, ini - 1), min(self.n_pag, fim + 1)), so=set(somente) if somente else None)
 
@@ -367,7 +502,8 @@ class _Leitor:
                 total=len(idxs), lista=", ".join(map(str, g)), problemas="\nO que faltou:\n" + probl + "\n",
                 regras=REGRAS,
                 formato=FORMATO.format(campo_gabarito=""))
-            dados, cortado = self._chamar_json(idxs, prompt, MAX_TOKENS_GRANDE if len(g) > 2 else MAX_TOKENS)
+            dados, cortado = self._chamar_json(idxs, prompt, MAX_TOKENS_GRANDE if len(g) > 2 else MAX_TOKENS,
+                                               mod=modelo(self.provedor))
             self.incorporar(dados, (idxs[0], idxs[-1] + 1), so=set(g))
             yield g
 
@@ -410,12 +546,19 @@ def _partes(pags, passo):
     return blocos
 
 
-def extrair(pdf_bytes, progresso=None, com_gabarito=False, esperadas=None, somente=None):
+def extrair(pdf_bytes, progresso=None, com_gabarito=False, esperadas=None, somente=None,
+            provedor="gemini", salvar=None, batida=None, uso=None):
     """Retorna {numero: {"fonte","apoio","enunciado","alternativas","ok"}} lendo o PDF com o Claude.
     esperadas: números de questão do gabarito (ajudam a conferir se alguma ficou para trás).
     somente: só estas questões precisam da IA (o resto já foi lido pelo leitor gratuito).
-    Com com_gabarito=True, retorna (questoes, gabarito) — o gabarito só é transcrito se estiver escrito no PDF."""
-    lt = _Leitor(pdf_bytes, com_gabarito)
+    Com com_gabarito=True, retorna (questoes, gabarito) — o gabarito só é transcrito se estiver escrito no PDF.
+    provedor: "gemini" (padrão, barato) ou "claude" (só com autorização no app).
+    salvar(parcial): chamado depois de cada parte com o que já foi lido (para continuar de onde parou).
+    uso: dict que recebe o consumo de tokens ({"entrada","saida","chamadas"}), mesmo se der erro."""
+    lt = _Leitor(pdf_bytes, com_gabarito, provedor, batida)
+    if uso is not None:
+        lt.uso = uso
+        uso.setdefault("entrada", 0), uso.setdefault("saida", 0), uso.setdefault("chamadas", 0)
     esperadas = sorted(set(esperadas or []))
     somente = sorted(set(somente or [])) or None
     lt.esperadas_todas = esperadas
@@ -429,6 +572,8 @@ def extrair(pdf_bytes, progresso=None, com_gabarito=False, esperadas=None, somen
         if progresso:
             progresso(k + 1, len(partes))
         lt.ler_parte(ini, fim, esperadas, somente)
+        if salvar:
+            salvar(lt.final())
 
     esp_conf = somente or esperadas or (sorted(lt.gabarito) if com_gabarito else None)
     rodadas = max(0, int(os.environ.get("IA_RODADAS_CONFERENCIA", "2")))
@@ -443,7 +588,8 @@ def extrair(pdf_bytes, progresso=None, com_gabarito=False, esperadas=None, somen
                 pass
         antes = dict(prob)
         for _ in lt.reler(prob):
-            pass
+            if salvar:
+                salvar(lt.final())
         if lt.problemas(esp_conf) == antes:  # nada melhorou: não insiste
             break
 

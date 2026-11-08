@@ -185,7 +185,7 @@ select.item-edital.salvo{border-color:var(--ok);border-style:solid}
   <div class="item">
     <div class="num {{ 'lida' if ts }}">{{ c.total }}</div>
     <div style="flex:1;min-width:0">
-      <div class="nome">{{ c.titulo }}{% if c.ia_status in ('fila','lendo') %} <span class="tag" style="background:color-mix(in srgb,var(--blue) 15%,transparent);color:var(--blue)">lendo com IA…</span>{% elif c.ia_status == 'ok' %} <span class="tag ok">IA</span>{% elif c.ia_status == 'erro' %} <span class="tag err">erro na IA</span>{% endif %}</div>
+      <div class="nome">{{ c.titulo }}{% if c.ia_status in ('fila','lendo') %} <span class="tag" style="background:color-mix(in srgb,var(--blue) 15%,transparent);color:var(--blue)">lendo com {{ 'Claude' if c.ia_provedor == 'claude' else 'Gemini' }}…</span>{% elif c.ia_status == 'autorizar' %} <span class="tag" style="background:color-mix(in srgb,#d89b00 18%,transparent);color:#a67300">IA: aguarda decisão</span>{% elif c.ia_status == 'ok' %} <span class="tag ok">IA</span>{% elif c.ia_status == 'erro' %} <span class="tag err">erro na IA</span>{% endif %}</div>
       <div class="det">{{ c.total }} questões ·
         {% if ts %}{{ ts|length }} tentativa{{ '' if ts|length == 1 else 's' }} · última
           <b style="color:{{ 'var(--ok)' if ts[-1].percentual >= meta_acerto else 'var(--err)' }}">{{ ts[-1].percentual|pct }}</b>

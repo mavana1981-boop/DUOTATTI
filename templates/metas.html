@@ -47,14 +47,30 @@
       </div>
     </div>
     <h2>Leitura das questões com IA</h2>
+    {% if ia.gemini %}
+    <p style="margin-top:0"><b>IA em uso agora: {{ ia.desc_gemini }}</b> — a mais barata.
+      {% if ia.claude %}O Claude (pago) só é usado quando você autoriza, caderno por caderno.{% else %}Claude não configurado.{% endif %}</p>
+    {% elif ia.claude %}
+    <p style="margin-top:0"><b>Gemini não configurado</b> (falta <b>GEMINI_API_KEY</b> no Railway). Nenhum caderno é lido com o Claude (pago) sem a sua autorização.</p>
+    {% endif %}
     {% if ia.on %}
-    <p style="margin-top:0">Ativada (modelo <b>{{ ia.modelo }}</b>). {{ ia.ok }} de {{ ia.total }} caderno(s) lidos com IA{% if ia.lendo %} · {{ ia.lendo }} em leitura agora{% endif %}{% if ia.erro %} · <span style="color:var(--err)">{{ ia.erro }} com erro</span>{% endif %}.</p>
+    <p>{{ ia.ok }} de {{ ia.total }} caderno(s) lidos com IA{% if ia.lendo %} · {{ ia.lendo }} em leitura agora{% if ia.lendo_claude %} ({{ ia.lendo_claude }} com o Claude){% endif %}{% endif %}{% if ia.erro %} · <span style="color:var(--err)">{{ ia.erro }} com erro</span>{% endif %}.</p>
+    {% if ia.autorizar %}
+    <div class="box" style="margin:0 0 12px;border-color:var(--warn,#d89b00)">
+      <b>{{ ia.autorizar|length }} caderno(s) aguardando sua decisão sobre o Claude (pago):</b>
+      <ul style="margin:6px 0 0 18px;padding:0">
+        {% for c in ia.autorizar %}<li><a href="{{ url_for('caderno_resolver', cid=c.id) }}">{{ c.titulo }}</a> <span class="mut">— {{ c.ia_msg }}</span></li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    {% if ia.gemini %}
     <form method="post" action="{{ url_for('cadernos_ia_todos') }}" style="margin-bottom:16px"
-          onsubmit="return confirm('Ler com IA todos os cadernos que ainda não foram lidos? Isso usa créditos da sua conta da Anthropic.')">
-      <button class="btn azul mini">Ler todos os cadernos com IA</button>
+          onsubmit="return confirm('Ler com o Gemini todos os cadernos que ainda não foram lidos? O Claude não será usado.')">
+      <button class="btn azul mini">Ler todos os cadernos com o Gemini</button>
     </form>
+    {% endif %}
     {% else %}
-    <p class="hint" style="margin:0 0 16px">Desativada. Para ativar, crie a variável <b>ANTHROPIC_API_KEY</b> no serviço do Railway (Variables) com a sua chave da API da Anthropic.</p>
+    <p class="hint" style="margin:0 0 16px">Desativada. Para ativar, crie a variável <b>GEMINI_API_KEY</b> no serviço do Railway (Variables) com a sua chave do Google AI Studio.</p>
     {% endif %}
     <h2>Situação das leituras</h2>
     {% if p.fase == 'questoes' %}
