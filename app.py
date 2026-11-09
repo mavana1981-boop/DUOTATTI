@@ -1346,11 +1346,13 @@ def _escolha_admin():
 
 
 def bateria_do_dia(plano=None):
-    """Bateria diária de questões. Ordem de escolha do item do edital:
-      1) caderno escolhido pelo admin para hoje;
+    """Bateria diária de questões. Ordem de escolha:
+      1) escolha do admin para hoje (um caderno, ou um critério: menor acerto / já estudada e nunca feita);
       2) item em que já houve questões hoje (não troca no meio do dia);
-      3) item das AULAS DE HOJE (planejadas ou já lidas hoje) que tenha caderno de questões;
-      4) rodízio: item com caderno, já lido, há mais tempo sem questões (o de ontem vai para o fim)."""
+      3) JÁ ESTUDADA E NUNCA FEITA: caderno de um assunto cuja aula já foi lida e que o aluno nunca resolveu
+         (aula lida hoje primeiro; depois a lida há mais tempo);
+      4) item das aulas de hoje (planejadas) que tenha caderno de questões;
+      5) rodízio: item com caderno, já lido, há mais tempo sem questões (o de ontem vai para o fim)."""
     cfg = configs()
     meta = max(QUESTOES_MINIMO, int(cfg_num(cfg, "meta_questoes_dia")))
     h = hoje()
@@ -1380,9 +1382,46 @@ def bateria_do_dia(plano=None):
             if tp.grupo:
                 aula_do_grupo.setdefault((a.materia_id, tp.grupo), a)
 
+    # o que já foi estudado: assuntos (e itens) de aulas com leitura — e quando foi a 1ª leitura
+    estudado_em, grupo_estudado_em, lidos_hoje_top = {}, {}, set()
+    for a in Aula.query.all():
+        datas = [l.lida_em for l in a.leituras]
+        if not datas:
+            continue
+        primeira = min(datas)
+        for tp in a.topicos:
+            if tp.id not in estudado_em or primeira < estudado_em[tp.id]:
+                estudado_em[tp.id] = primeira
+            if tp.grupo:
+                k = (a.materia_id, tp.grupo)
+                if k not in grupo_estudado_em or primeira < grupo_estudado_em[k]:
+                    grupo_estudado_em[k] = primeira
+            if max(datas) >= ini:
+                lidos_hoje_top.add(tp.id)
+                if tp.grupo:
+                    lidos_hoje_top.add((a.materia_id, tp.grupo))
+
+    def feito(c):
+        return any(t.respondidas for t in c.tentativas)
+
+    def acerto(c):
+        r = sum(t.respondidas for t in c.tentativas)
+        return (sum(t.acertos for t in c.tentativas) / r) if r else None
+
+    def estudado(c):
+        """Quando o assunto do caderno foi estudado (1ª leitura da aula), ou None."""
+        if c.topico_id in estudado_em:
+            return estudado_em[c.topico_id]
+        if c.topico and c.topico.grupo:
+            return grupo_estudado_em.get((c.materia_id, c.topico.grupo))
+        return None
+
+    def estudado_hoje(c):
+        return c.topico_id in lidos_hoje_top or bool(c.topico and (c.materia_id, c.topico.grupo) in lidos_hoje_top)
+
     def ordenar_cadernos(cads):
-        # cadernos do mesmo assunto da aula de hoje primeiro; depois os menos resolvidos
-        return sorted(cads, key=lambda c: (c.topico_id not in assuntos_hoje, len(c.tentativas), c.id))
+        # nunca feitos primeiro; depois os do assunto da aula de hoje; depois os menos resolvidos
+        return sorted(cads, key=lambda c: (feito(c), c.topico_id not in assuntos_hoje, len(c.tentativas), c.id))
 
     itens = []
     for m in materias:
@@ -1408,7 +1447,7 @@ def bateria_do_dia(plano=None):
             sem_caderno.append((a, "nenhum caderno de questões vinculado a " + grupos_a[0][1]))
     ids_hoje = {c.id for i in itens if i["aula"] is not None for c in i["cadernos"]}
     base = {"meta": meta, "feitas": feitas, "acertos": acertos, "item": None, "alternativas": [],
-            "escolha_admin": False, "aulas_sem_caderno": sem_caderno, "cadernos_hoje": ids_hoje}
+            "escolha_admin": False, "aulas_sem_caderno": sem_caderno, "cadernos_hoje": ids_hoje, "modo_admin": None}
     if not itens:
         return base
 
@@ -1422,10 +1461,57 @@ def bateria_do_dia(plano=None):
                  + sorted([i for i in itens if not i["lido"] and not recente(i)], key=chave)
                  + sorted([i for i in itens if recente(i)], key=chave))
 
+    todos_cads = [c for i in itens for c in i["cadernos"]]
+
+    def item_do_caderno(cad, motivo):
+        gr = cad.topico.grupo if cad.topico and cad.topico.grupo else None
+        base_it = next((i for i in itens if gr and i["chave"] == (cad.materia_id, gr)), None)
+        if base_it:
+            it = dict(base_it, cadernos=[cad] + [x for x in base_it["cadernos"] if x.id != cad.id])
+        else:
+            it = {"materia": cad.materia, "grupo": cad.topico.rotulo if cad.topico else cad.titulo,
+                  "chave": (cad.materia_id, gr), "ordem": (cad.materia.ordem, 0), "lido": True,
+                  "ultimo": None, "cadernos": [cad], "aula": None}
+        it["motivo"] = motivo
+        return it
+
+    def estudada_nova():
+        """Caderno de assunto já estudado e nunca resolvido (aula lida hoje primeiro; depois a mais antiga)."""
+        cs = [c for c in todos_cads if not feito(c) and estudado(c)]
+        if not cs:
+            return None
+        c = min(cs, key=lambda c: (not estudado_hoje(c), estudado(c), c.materia.ordem, c.id))
+        quando = estudado(c)
+        return item_do_caderno(c, "já estudada e nunca feita" + (" (aula lida hoje)" if estudado_hoje(c)
+                                                               else f" (estudada em {quando.strftime('%d/%m')})"))
+
+    def menor_acerto():
+        cs = [(acerto(c), c) for c in todos_cads if acerto(c) is not None]
+        if not cs:
+            return None
+        pct, c = min(cs, key=lambda x: (x[0], max(t.feita_em for t in x[1].tentativas), x[1].id))
+        return item_do_caderno(c, f"menor acerto: {round(100 * pct)}% neste caderno")
+
     item = None
     esc = _escolha_admin()
-    cad = db.session.get(Caderno, esc.get("caderno_id")) if esc and esc.get("caderno_id") else None
-    if cad:
+    modo = esc.get("modo") if esc else None
+    if modo and esc.get("caderno_id"):
+        fixo = db.session.get(Caderno, esc["caderno_id"])  # critério resolvido na hora da escolha: não muda no dia
+        if fixo:
+            item = item_do_caderno(fixo, esc.get("motivo") or modo.replace("_", " "))
+            base["modo_admin"] = modo
+    elif modo == "menor_acerto":
+        item = menor_acerto()
+        base["modo_admin"] = modo
+    elif modo == "estudada_nova":
+        item = estudada_nova()
+        base["modo_admin"] = modo
+    if item is not None:
+        item["motivo"] = "escolhida pelo admin — " + item["motivo"]
+        base["escolha_admin"] = True
+        base["modo_ok"] = True  # o critério achou um caderno
+    cad = db.session.get(Caderno, esc.get("caderno_id")) if esc and esc.get("caderno_id") and not modo else None
+    if cad and item is None:
         gr = cad.topico.grupo if cad.topico and cad.topico.grupo else None
         base_it = next((i for i in itens if gr and i["chave"] == (cad.materia_id, gr)), None)
         if base_it:
@@ -1440,6 +1526,8 @@ def bateria_do_dia(plano=None):
         hoje_item = next(((t.materia_id, t.caderno.topico.grupo) for t in tents if t.feita_em >= ini and t.caderno
                           and t.caderno.topico and t.caderno.topico.grupo), None)
         item = next((dict(i, motivo="você já começou este item hoje") for i in itens if i["chave"] == hoje_item), None)
+    if item is None:
+        item = estudada_nova()
     if item is None:
         do_dia = [i for i in itens if i["aula"] is not None and i["cadernos"]]
         do_dia.sort(key=lambda i: (aulas_hoje.index(i["aula"]), chave(i)))
@@ -3165,10 +3253,28 @@ def _refazer_foto_do_dia():
 def bateria_escolher():
     """Admin troca o caderno da bateria de hoje do aluno que está vendo (ou volta ao automático)."""
     v = request.form.get("escolha", "")
+    modos = {"menor_acerto": "o caderno com menor acerto", "estudada_nova": "uma questão já estudada e nunca feita"}
+    aluno = Usuario.query.filter_by(login=escopo()).first()
+    if v in modos:
+        salvar_cfg("bateria_escolha", json.dumps({"data": hoje().isoformat(), "modo": v}))
+        db.session.commit()
+        b = bateria_do_dia()
+        if b.get("modo_ok") and b.get("modo_admin") == v and b.get("item") and b["item"]["cadernos"]:
+            salvar_cfg("bateria_escolha", json.dumps({"data": hoje().isoformat(), "modo": v,
+                                                      "caderno_id": b["item"]["cadernos"][0].id,
+                                                      "motivo": b["item"]["motivo"].replace("escolhida pelo admin — ", "")}))
+            flash(f"Bateria de hoje de {(aluno.nome if aluno else None) or escopo()}: {modos[v]} — "
+                  f"{b['item']['cadernos'][0].titulo if b['item']['cadernos'] else b['item']['grupo']}.", "ok")
+        else:
+            salvar_cfg("bateria_escolha", "")
+            flash(("Nenhum caderno resolvido ainda para comparar acertos." if v == "menor_acerto"
+                   else "Não há caderno de assunto já estudado que ainda não tenha sido feito.")
+                  + " A bateria continua automática.", "erro")
+        db.session.commit()
+        return redirect(url_for("index") + "#bateria")
     if v.isdigit() and db.session.get(Caderno, int(v)):
         salvar_cfg("bateria_escolha", json.dumps({"data": hoje().isoformat(), "caderno_id": int(v)}))
         c = db.session.get(Caderno, int(v))
-        aluno = Usuario.query.filter_by(login=escopo()).first()
         flash(f"Bateria de hoje de {(aluno.nome if aluno else None) or escopo()} trocada para “{c.titulo}”.", "ok")
     else:
         salvar_cfg("bateria_escolha", "")
