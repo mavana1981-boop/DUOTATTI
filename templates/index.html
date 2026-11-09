@@ -329,19 +329,39 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
       {% endif %}
     </div>
     <dialog class="troca" id="dlg-bateria">
+      <h3 style="margin:0 0 4px">Trocar a bateria de hoje</h3>
+      <p class="hint" style="margin:4px 0 0">Vale só para hoje, para o aluno que você está vendo. A troca sempre tira o caderno atual{% if b.trocados|length > 1 %} e os {{ b.trocados|length - 1 }} já trocados hoje{% endif %}.</p>
+      <form method="post" action="{{ url_for('bateria_escolher') }}" id="form-criterio" class="lista-incl" style="max-height:none">
+        <input type="hidden" name="escolha" value="criterio">
+        <b style="display:block;margin:4px 0">Trocar por critérios</b>
+        <label><input type="checkbox" name="so_estudadas" value="1" checked><span><b>Só de assuntos já estudados</b><small class="mut">caderno de um assunto cuja aula já foi lida</small></span></label>
+        <label><input type="radio" name="prioridade" value="nunca_feito" checked><span><b>Nunca feito</b><small class="mut">o aluno ainda não resolveu</small></span></label>
+        <label><input type="radio" name="prioridade" value="menor_acerto"><span><b>Menor acerto</b><small class="mut">já resolvido, com o pior percentual</small></span></label>
+        <p id="previa-criterio" style="margin:8px 0;font-weight:800"></p>
+        <div class="row" style="gap:8px;justify-content:flex-end">
+          <button type="button" class="btn claro mini" onclick="this.closest('dialog').close()">Cancelar</button>
+          <button class="btn azul mini" id="btn-criterio">Trocar</button>
+        </div>
+      </form>
+      <script>
+      (function () {
+        const PV = {{ (b.previa_criterio or {})|tojson }};
+        const f = document.getElementById('form-criterio'), out = document.getElementById('previa-criterio'), bt = document.getElementById('btn-criterio');
+        function upd() {
+          const so = f.so_estudadas.checked ? 1 : 0, pr = f.querySelector('[name=prioridade]:checked').value;
+          const p = PV[so + ':' + pr];
+          out.style.color = p ? 'var(--blue)' : 'var(--err)';
+          out.textContent = p ? '→ vai trocar para: ' + p.titulo + ' (' + p.materia + ') — ' + p.motivo
+                              : 'Nenhum outro caderno atende a esses critérios.';
+          bt.disabled = !p;
+        }
+        f.addEventListener('change', upd); upd();
+      })();
+      </script>
       <form method="post" action="{{ url_for('bateria_escolher') }}">
-        <h3 style="margin:0 0 4px">Trocar a bateria de hoje</h3>
-        <p class="hint" style="margin:4px 0 0">Vale só para hoje, para o aluno que você está vendo.</p>
+        <b style="display:block;margin:12px 0 0">Ou escolha o caderno</b>
         <div class="lista-incl">
-          <label><input type="radio" name="escolha" value="" {{ 'checked' if not b.escolha_admin }}><span><b>Automático</b><small class="mut">já estudada e nunca feita; depois aula de hoje; depois rodízio do edital</small></span></label>
-          <fieldset><legend>Por critério</legend>
-            {% set pv = b.previa or {} %}
-            {% for modo, nome in [('estudada_nova', 'Já estudada e nunca feita'), ('menor_acerto', 'Menor acerto')] %}
-            <label class="{{ 'off' if not pv.get(modo) }}"><input type="radio" name="escolha" value="{{ modo }}" {{ 'checked' if b.modo_admin == modo }} {{ 'disabled' if not pv.get(modo) }}><span><b>{{ nome }}</b>
-              {% if pv.get(modo) %}<small style="color:var(--blue);font-weight:800">→ {{ pv[modo] }}{% if b.item and b.item.cadernos and pv[modo].startswith(b.item.cadernos[0].titulo ~ ' ·') %} (já é a bateria de hoje){% endif %}</small>
-              {% else %}<small class="mut">Indisponível: {{ pv.por_que[modo] }}.</small>{% endif %}</span></label>
-            {% endfor %}
-          </fieldset>
+          <label><input type="radio" name="escolha" value="" {{ 'checked' if not b.escolha_admin }}><span><b>Automático</b><small class="mut">volta à escolha automática (já estudada e nunca feita; depois aula de hoje; depois rodízio)</small></span></label>
           {% set hoje_c = cadernos_admin|selectattr('id', 'in', b.cadernos_hoje)|list %}
           {% if hoje_c %}<fieldset><legend>Das aulas de hoje</legend>
             {% for c in hoje_c %}<label><input type="radio" name="escolha" value="{{ c.id }}" {{ 'checked' if b.escolha_admin and not b.modo_admin and b.item.cadernos and b.item.cadernos[0].id == c.id }}><span>{{ c.titulo }}<small class="mut">{{ c.total }} questões{% if c.topico %} · {{ c.topico.rotulo }}{% endif %}</small></span></label>{% endfor %}

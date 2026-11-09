@@ -1545,6 +1545,37 @@ def bateria_do_dia(plano=None):
         item = dict(ordenados[0], motivo="rodízio dos itens do edital")
     alternativas = [i for i in ordenados if i["chave"] != item["chave"]]
     alternativas = sorted(alternativas, key=lambda i: i["aula"] is None)[:3]
+
+    # "Trocar bateria" por critérios: o próximo caderno (nunca o atual nem os já trocados hoje)
+    atual = item["cadernos"][0].id if item and item["cadernos"] else None
+    fora = set((esc or {}).get("trocados") or []) | ({atual} if atual else set())
+    todos = [c for c in Caderno.query.join(Materia).order_by(Materia.ordem, Caderno.id).all() if c.total]
+
+    def candidato(so_estudadas, prioridade):
+        cs = [c for c in todos if c.id not in fora and (estudado(c) or not so_estudadas)]
+        if prioridade == "menor_acerto":
+            cs = [(acerto(c), c) for c in cs if acerto(c) is not None]
+            if not cs:
+                return None
+            pct, c = min(cs, key=lambda x: (x[0], max(t.feita_em for t in x[1].tentativas), x[1].id))
+            return c, f"menor acerto ({round(100 * pct)}%)"
+        cs = [c for c in cs if not feito(c)]
+        if not cs:
+            return None
+        c = min(cs, key=lambda c: (estudado(c) is None, not estudado_hoje(c), estudado(c) or datetime.max,
+                                   c.materia.ordem, c.id))
+        q = estudado(c)
+        return c, ("nunca feita, aula lida hoje" if estudado_hoje(c) else
+                   f"nunca feita, estudada em {q.strftime('%d/%m')}" if q else "nunca feita")
+
+    previa = {}
+    for so in (True, False):
+        for pr in ("nunca_feito", "menor_acerto"):
+            r = candidato(so, pr)
+            previa[f"{int(so)}:{pr}"] = {"id": r[0].id, "titulo": r[0].titulo, "materia": r[0].materia.nome,
+                                         "motivo": r[1]} if r else None
+    base["previa_criterio"] = previa
+    base["trocados"] = sorted(fora)
     return dict(base, item=item, alternativas=alternativas)
 
 
@@ -3266,6 +3297,26 @@ def _aviso_bateria(msg, cat="ok"):
 def bateria_escolher():
     """Admin troca o caderno da bateria de hoje do aluno que está vendo (ou volta ao automático)."""
     v = request.form.get("escolha", "")
+    if v == "criterio":
+        so = request.form.get("so_estudadas") == "1"
+        pr = request.form.get("prioridade") if request.form.get("prioridade") in ("nunca_feito", "menor_acerto") else "nunca_feito"
+        b = bateria_do_dia()
+        alvo = (b.get("previa_criterio") or {}).get(f"{int(so)}:{pr}")
+        aluno = Usuario.query.filter_by(login=escopo()).first()
+        if not alvo:
+            _aviso_bateria("Nenhum outro caderno " + ("já resolvido" if pr == "menor_acerto" else "nunca feito")
+                           + (" de assunto já estudado" if so else "")
+                           + " (fora o atual e os já trocados hoje). A bateria não foi trocada."
+                           + (" Desmarque “Só de assuntos já estudados” para ampliar." if so else ""), "erro")
+        else:
+            salvar_cfg("bateria_escolha", json.dumps({
+                "data": hoje().isoformat(), "modo": "criterio", "caderno_id": alvo["id"],
+                "motivo": ("assunto já estudado · " if so else "") + alvo["motivo"],
+                "trocados": b.get("trocados") or []}))
+            _aviso_bateria(f"Bateria de hoje de {(aluno.nome if aluno else None) or escopo()} trocada para "
+                           f"“{alvo['titulo']}” ({alvo['materia']}) — {alvo['motivo']}.", "ok")
+        db.session.commit()
+        return redirect(url_for("index") + "#bateria")
     modos = {"menor_acerto": "o caderno com menor acerto", "estudada_nova": "uma questão já estudada e nunca feita"}
     aluno = Usuario.query.filter_by(login=escopo()).first()
     if v in modos:
@@ -3286,7 +3337,8 @@ def bateria_escolher():
         db.session.commit()
         return redirect(url_for("index") + "#bateria")
     if v.isdigit() and db.session.get(Caderno, int(v)):
-        salvar_cfg("bateria_escolha", json.dumps({"data": hoje().isoformat(), "caderno_id": int(v)}))
+        trocados = bateria_do_dia().get("trocados") or []
+        salvar_cfg("bateria_escolha", json.dumps({"data": hoje().isoformat(), "caderno_id": int(v), "trocados": trocados}))
         c = db.session.get(Caderno, int(v))
         _aviso_bateria(f"Bateria de hoje de {(aluno.nome if aluno else None) or escopo()} trocada para “{c.titulo}”.", "ok")
     else:
