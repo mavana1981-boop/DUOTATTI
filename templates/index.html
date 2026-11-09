@@ -361,7 +361,35 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
     <i style="width:{{ ([100, 100 * (s.acerto7 or 0) / s.meta_acerto]|min)|round if s.meta_acerto else 0 }}%"></i></div>
 </section>
 
-<h2>Sua trilha</h2>
+<div class="row" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+  <h2>Sua trilha</h2>
+  {% if eh_admin %}<button type="button" class="btn mini azul" onclick="document.getElementById('dlg-materia').showModal()">+ Nova matéria</button>{% endif %}
+</div>
+{% if eh_admin %}
+<dialog class="troca" id="dlg-materia">
+  <form method="post" action="{{ url_for('materia_nova') }}">
+    <h3 style="margin:0 0 4px">Nova matéria</h3>
+    <p class="hint" style="margin:4px 0 0">Depois de criar, você vai para a página da matéria para enviar as aulas em PDF.</p>
+    <label class="f" for="nm-nome">Nome</label>
+    <input type="text" id="nm-nome" name="nome" maxlength="120" required placeholder="Ex.: Direito Civil">
+    <label class="f" for="nm-info">Descrição (opcional)</label>
+    <input type="text" id="nm-info" name="info" maxlength="200" placeholder="Ex.: Bloco II · Código Civil">
+    <div style="display:flex;gap:12px;align-items:flex-end">
+      <div style="flex:1"><label class="f" for="nm-q">Questões na prova (opcional)</label>
+        <input type="number" id="nm-q" name="questoes_prova" min="0" max="200" inputmode="numeric"></div>
+      <div><label class="f" for="nm-cor">Cor</label>
+        <input type="color" id="nm-cor" name="cor" value="#f76b15" style="width:56px;height:46px;border:2px solid var(--line);border-radius:12px;background:var(--bg);padding:3px"></div>
+    </div>
+    <label class="f" for="nm-ass">Assuntos (opcional — um por linha)</label>
+    <textarea id="nm-ass" name="assuntos" rows="4" placeholder="Ex.:&#10;Parte geral&#10;Contratos"></textarea>
+    <p class="hint">Dá para criar mais assuntos depois, ao enviar aulas ou cadernos.</p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button type="button" class="btn claro mini" onclick="this.closest('dialog').close()">Cancelar</button>
+      <button class="btn azul mini">Criar matéria</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
 <div class="trilha">
   {% for m, st in trilha %}
   <a class="mat" href="{{ url_for('materia', mid=m.id) }}">

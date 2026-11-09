@@ -2079,6 +2079,36 @@ def index():
                            streak=ofensiva(), tot_aulas=tot_aulas, tot_lidas=tot_lidas)
 
 
+@app.post("/materia/nova")
+@so_admin
+def materia_nova():
+    """Admin cria uma matéria nova (fora da lista do edital), com assuntos opcionais (um por linha)."""
+    f = request.form
+    nome = sem_nulos(f.get("nome", "")).strip()[:120]
+    if not nome:
+        flash("Dê um nome para a matéria.", "erro")
+        return redirect(url_for("index"))
+    if any(m.nome.strip().lower() == nome.lower() for m in Materia.query.all()):
+        flash(f"Já existe uma matéria chamada “{nome}”.", "erro")
+        return redirect(url_for("index"))
+    cor = (f.get("cor") or "").strip()
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", cor):
+        cor = "#3fbf74"
+    try:
+        q = int(f.get("questoes_prova") or 0) or None
+    except ValueError:
+        q = None
+    ordem = (db.session.query(db.func.max(Materia.ordem)).scalar() or 0) + 1
+    m = Materia(nome=nome, info=sem_nulos(f.get("info", "")).strip()[:200] or None,
+                questoes_prova=q, cor=cor, ordem=ordem)
+    assuntos = list(dict.fromkeys(a.strip()[:200] for a in sem_nulos(f.get("assuntos", "")).splitlines() if a.strip()))
+    m.topicos = [Topico(nome=a, ordem=k, personalizado=True) for k, a in enumerate(assuntos)]
+    db.session.add(m)
+    db.session.commit()
+    flash(f"Matéria “{nome}” criada. Agora é só enviar as aulas em PDF.", "ok")
+    return redirect(url_for("materia", mid=m.id) + "#aulas")
+
+
 @app.route("/materia/<int:mid>")
 def materia(mid):
     m = db.get_or_404(Materia, mid)
