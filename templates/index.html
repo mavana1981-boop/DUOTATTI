@@ -295,6 +295,8 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
     {% if b.feitas >= b.meta %}
     <p style="font-weight:800;color:var(--ok);margin:0 0 8px">Bateria de hoje concluída: {{ b.acertos }}/{{ b.feitas }} acertos{% if b.feitas %} ({{ (100 * b.acertos / b.feitas)|round|int }}%){% endif %}.</p>
     {% endif %}
+    {% set av = session.pop('aviso_bateria', None) %}
+    {% if av %}<p class="{{ 'aviso-b' if av[0] == 'erro' else 'motivo-b adm' }}" style="display:block;margin:0 0 8px;padding:8px 10px;border-radius:10px;font-weight:800;background:color-mix(in srgb,{{ 'var(--err)' if av[0] == 'erro' else 'var(--ok)' }} 12%,transparent)">{{ av[1] }}</p>{% endif %}
     {% if b.item %}{% set it = b.item %}
     <div class="item-dia" style="--c:{{ it.materia.cor }}">
       <small>Item do edital de hoje · {{ it.materia.nome }}</small>
@@ -333,8 +335,12 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
         <div class="lista-incl">
           <label><input type="radio" name="escolha" value="" {{ 'checked' if not b.escolha_admin }}><span><b>Automático</b><small class="mut">já estudada e nunca feita; depois aula de hoje; depois rodízio do edital</small></span></label>
           <fieldset><legend>Por critério</legend>
-            <label><input type="radio" name="escolha" value="estudada_nova" {{ 'checked' if b.modo_admin == 'estudada_nova' }}><span><b>Já estudada e nunca feita</b><small class="mut">caderno de assunto com aula lida que o aluno ainda não resolveu</small></span></label>
-            <label><input type="radio" name="escolha" value="menor_acerto" {{ 'checked' if b.modo_admin == 'menor_acerto' }}><span><b>Menor acerto</b><small class="mut">caderno já resolvido com o pior percentual de acerto</small></span></label>
+            {% set pv = b.previa or {} %}
+            {% for modo, nome in [('estudada_nova', 'Já estudada e nunca feita'), ('menor_acerto', 'Menor acerto')] %}
+            <label class="{{ 'off' if not pv.get(modo) }}"><input type="radio" name="escolha" value="{{ modo }}" {{ 'checked' if b.modo_admin == modo }} {{ 'disabled' if not pv.get(modo) }}><span><b>{{ nome }}</b>
+              {% if pv.get(modo) %}<small style="color:var(--blue);font-weight:800">→ {{ pv[modo] }}{% if b.item and b.item.cadernos and pv[modo].startswith(b.item.cadernos[0].titulo ~ ' ·') %} (já é a bateria de hoje){% endif %}</small>
+              {% else %}<small class="mut">Indisponível: {{ pv.por_que[modo] }}.</small>{% endif %}</span></label>
+            {% endfor %}
           </fieldset>
           {% set hoje_c = cadernos_admin|selectattr('id', 'in', b.cadernos_hoje)|list %}
           {% if hoje_c %}<fieldset><legend>Das aulas de hoje</legend>

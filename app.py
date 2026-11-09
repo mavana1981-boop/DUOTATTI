@@ -1492,6 +1492,14 @@ def bateria_do_dia(plano=None):
         pct, c = min(cs, key=lambda x: (x[0], max(t.feita_em for t in x[1].tentativas), x[1].id))
         return item_do_caderno(c, f"menor acerto: {round(100 * pct)}% neste caderno")
 
+    # prévia dos critérios (para o diálogo "Trocar bateria" mostrar o que cada um escolheria)
+    _pv_e, _pv_m = estudada_nova(), menor_acerto()
+    base["previa"] = {
+        "estudada_nova": (_pv_e["cadernos"][0].titulo + " · " + _pv_e["motivo"]) if _pv_e else None,
+        "menor_acerto": (_pv_m["cadernos"][0].titulo + " · " + _pv_m["motivo"]) if _pv_m else None,
+        "por_que": {"estudada_nova": "nenhum caderno vinculado a um assunto de aula já lida que ainda não tenha sido feito",
+                    "menor_acerto": "nenhum caderno resolvido ainda"},
+    }
     item = None
     esc = _escolha_admin()
     modo = esc.get("modo") if esc else None
@@ -3248,6 +3256,11 @@ def _refazer_foto_do_dia():
         db.session.commit()
 
 
+def _aviso_bateria(msg, cat="ok"):
+    """Mensagem mostrada dentro do cartão da bateria (a página volta rolada até ele)."""
+    session["aviso_bateria"] = [cat, msg]
+
+
 @app.post("/bateria/escolher")
 @so_admin
 def bateria_escolher():
@@ -3263,11 +3276,11 @@ def bateria_escolher():
             salvar_cfg("bateria_escolha", json.dumps({"data": hoje().isoformat(), "modo": v,
                                                       "caderno_id": b["item"]["cadernos"][0].id,
                                                       "motivo": b["item"]["motivo"].replace("escolhida pelo admin — ", "")}))
-            flash(f"Bateria de hoje de {(aluno.nome if aluno else None) or escopo()}: {modos[v]} — "
+            _aviso_bateria(f"Bateria de hoje de {(aluno.nome if aluno else None) or escopo()}: {modos[v]} — "
                   f"{b['item']['cadernos'][0].titulo if b['item']['cadernos'] else b['item']['grupo']}.", "ok")
         else:
             salvar_cfg("bateria_escolha", "")
-            flash(("Nenhum caderno resolvido ainda para comparar acertos." if v == "menor_acerto"
+            _aviso_bateria(("Nenhum caderno resolvido ainda para comparar acertos." if v == "menor_acerto"
                    else "Não há caderno de assunto já estudado que ainda não tenha sido feito.")
                   + " A bateria continua automática.", "erro")
         db.session.commit()
@@ -3275,10 +3288,10 @@ def bateria_escolher():
     if v.isdigit() and db.session.get(Caderno, int(v)):
         salvar_cfg("bateria_escolha", json.dumps({"data": hoje().isoformat(), "caderno_id": int(v)}))
         c = db.session.get(Caderno, int(v))
-        flash(f"Bateria de hoje de {(aluno.nome if aluno else None) or escopo()} trocada para “{c.titulo}”.", "ok")
+        _aviso_bateria(f"Bateria de hoje de {(aluno.nome if aluno else None) or escopo()} trocada para “{c.titulo}”.", "ok")
     else:
         salvar_cfg("bateria_escolha", "")
-        flash("Bateria de hoje voltou a ser escolhida automaticamente.", "info")
+        _aviso_bateria("Bateria de hoje voltou a ser escolhida automaticamente.", "info")
     db.session.commit()
     return redirect(url_for("index") + "#bateria")
 
