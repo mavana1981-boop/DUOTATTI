@@ -19,6 +19,9 @@
     <p class="hint">Os dias seguintes até a prova ficam para questões e descanso.</p>
     <label class="f">Máximo de dias sem ver uma aula já iniciada</label>
     <input type="number" name="max_dias_sem_ver" min="2" max="60" value="{{ cfg.max_dias_sem_ver }}">
+    <label class="f">Mínimo de aulas novas por dia</label>
+    <input type="number" name="novas_por_dia" min="0" max="10" value="{{ cfg.novas_por_dia }}">
+    <p class="hint">Mais aulas novas por dia = termina antes, mas a meta diária sobe (cada aula iniciada precisa ser relida a cada {{ cfg.max_dias_sem_ver }} dias).</p>
     <h2 style="margin:18px 0 0">Questões</h2>
     <label class="f">Meta de acerto (%)</label>
     <input type="number" name="meta_acerto" min="1" max="100" value="{{ cfg.meta_acerto }}">
@@ -91,9 +94,8 @@
       {% endfor %}
     </div>
     <ul style="padding-left:18px;margin:0;font-size:.92rem">
-      <li><b>Meta diária de leituras</b> = leituras que faltam ÷ dias até {{ cfg.data_limite_leituras[8:10] }}/{{ cfg.data_limite_leituras[5:7] }}. É recalculada todo dia: atrasou, a meta sobe; adiantou, ela desce.</li>
-      <li><b>Próxima aula</b>: da matéria há mais tempo sem estudo, intercalando as matérias.</li>
-      <li><b>Prioridade</b>: aula já iniciada perto de {{ cfg.max_dias_sem_ver }} dias sem leitura passa na frente.</li>
+      <li><b>Meta diária de leituras</b> = as releituras necessárias para nenhuma aula iniciada passar de {{ cfg.max_dias_sem_ver }} dias sem leitura (distribuídas por igual nos dias) + pelo menos {{ cfg.novas_por_dia }} aula(s) nova(s) por dia — e nunca menos que o que falta ÷ dias até {{ cfg.data_limite_leituras[8:10] }}/{{ cfg.data_limite_leituras[5:7] }}. O calendário usa a mesma regra.</li>
+      <li><b>Ordem da lista</b>: primeiro as releituras que vencem, depois as remarcadas, as aulas novas (intercalando as matérias) e, por fim, as releituras de quem está há mais tempo sem leitura.</li>
       <li><b>Bateria diária</b>: {{ [60, cfg.meta_questoes_dia|int]|max }} questões no item do edital há mais tempo sem questões (de preferência um já lido).</li>
       <li><b>Radiante</b>: estudou hoje, bateu leituras e questões do dia e acerto ≥ {{ cfg.meta_acerto }}%.</li>
       <li><b>Brava</b>: meta do dia longe, aulas paradas há mais de {{ cfg.max_dias_sem_ver }} dias ou acerto baixo.</li>

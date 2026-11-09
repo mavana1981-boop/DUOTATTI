@@ -47,7 +47,7 @@
       <ul>
         <li>Cada aula deve ser lida <b>{{ cfg.meta_leituras_por_aula }}x</b> até <b>{{ cfg.data_limite_leituras[8:10] }}/{{ cfg.data_limite_leituras[5:7] }}</b>. Os últimos dias antes da prova ficam para questões e descanso.</li>
         <li>Eu somo as leituras que faltam em <b>todas as matérias</b> e divido pelos dias restantes. Atrasou? A meta sobe. Adiantou? Ela desce.</li>
-        <li>A lista <b>Próximas leituras</b> intercala as matérias, começando pela que está parada há mais tempo. Nenhuma aula fica mais de <b>{{ cfg.max_dias_sem_ver }} dias</b> sem leitura.</li>
+        <li>A lista <b>Próximas leituras</b> tem as releituras que vencem (nenhuma aula fica mais de <b>{{ cfg.max_dias_sem_ver }} dias</b> sem leitura) e pelo menos <b>{{ cfg.novas_por_dia }}</b> aula(s) nova(s) por dia, intercalando as matérias.</li>
       </ul>
     </section>
 

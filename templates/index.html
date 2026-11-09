@@ -139,12 +139,11 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
   <p class="mut">Nenhuma aula cadastrada ainda.</p>
   {% else %}
   <div class="ritmo">
-    <div><b>{{ p.meta_vivo }}</b><small>aula{{ '' if p.meta_vivo == 1 else 's' }} por dia</small></div>
+    <div><b>{{ p.meta_hoje }}</b><small>aula{{ '' if p.meta_hoje == 1 else 's' }} hoje</small></div>
     {% if p.dias > 1 %}
-    <p>É quanto você precisa ler <b>por dia</b> para fechar <b>{{ p.alvo }}x cada aula</b> até <b>{{ p.limite.strftime('%d/%m') }}</b>.
-      Recalculado a cada leitura: faltam <b>{{ p.restante }}</b> leitura{{ '' if p.restante == 1 else 's' }}{% if p.faltam_hoje %} ({{ p.faltam_hoje }} ainda hoje){% endif %}
-      para {{ p.dias - 1 }} dia{{ '' if p.dias == 2 else 's' }} depois de hoje
-      <span class="mut">(ritmo exato: {{ "%.2f"|format(p.ritmo_vivo)|replace('.', ',') }} leituras/dia)</span></p>
+    <p>Meta de hoje: <b>{{ p.releituras_hoje }}</b> releitura{{ '' if p.releituras_hoje == 1 else 's' }} (para nenhuma aula passar de {{ p.max_dias }} dias sem leitura){% if p.novas_hoje %} + <b>{{ p.novas_hoje }}</b> aula{{ '' if p.novas_hoje == 1 else 's' }} nova{{ '' if p.novas_hoje == 1 else 's' }}{% endif %} — é o mesmo número do calendário.
+      Amanhã: <b>{{ p.meta_amanha }}</b>. Faltam <b>{{ p.restante }}</b> leitura{{ '' if p.restante == 1 else 's' }} até <b>{{ p.limite.strftime('%d/%m') }}</b>
+      <span class="mut">(média mínima: {{ "%.2f"|format(p.ritmo_vivo)|replace('.', ',') }} leituras/dia)</span></p>
     {% else %}
     <p>Hoje é o último dia de leituras: faltam <b>{{ p.faltam_hoje }}</b> para fechar a meta de hoje.</p>
     {% endif %}
@@ -153,7 +152,7 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
   <div class="row" style="margin-top:10px"><b>Leituras de aula de hoje</b><span class="right mut"><b style="color:var(--ink)">{{ p.feitas_hoje }}</b>/{{ p.meta_hoje }}</span></div>
   <div class="bar azul" style="margin:6px 0 6px"><i style="width:{{ pl|round }}%"></i></div>
   <p class="hint" style="margin:0 0 12px">Faltam <b>{{ p.aulas_faltando }}</b> aula{{ '' if p.aulas_faltando == 1 else 's' }} e <b>{{ p.restante }}</b> leitura{{ '' if p.restante == 1 else 's' }} para ler cada aula {{ p.alvo }}x até <b>{{ p.limite.strftime('%d/%m') }}</b>
-    ({{ p.dias }} dia{{ '' if p.dias == 1 else 's' }}, contando hoje). A meta de hoje ({{ p.meta_hoje }}) foi definida no início do dia; ler a mais reduz o ritmo dos próximos dias na hora.</p>
+    ({{ p.dias }} dia{{ '' if p.dias == 1 else 's' }}, contando hoje). A meta de hoje ({{ p.meta_hoje }}) foi definida no início do dia.</p>
 
   {% if p.atrasadas %}
   <div class="alerta">
@@ -192,7 +191,7 @@ dialog.troca select{width:100%;padding:10px;border-radius:12px;border:2px solid 
     {% endfor %}
   </ol>
   {% elif p.meta_hoje and p.feitas_hoje > p.meta_hoje %}
-  <p style="font-weight:800;color:var(--ok)">Você leu {{ p.feitas_hoje - p.meta_hoje }} a mais que o planejado hoje! Reajustei o plano: a partir de amanhã são {{ p.meta_amanha }} leitura{{ '' if p.meta_amanha == 1 else 's' }} por dia.</p>
+  <p style="font-weight:800;color:var(--ok)">Você leu {{ p.feitas_hoje - p.meta_hoje }} a mais que o planejado hoje! Reajustei o plano: amanhã são {{ p.meta_amanha }} leitura{{ "" if p.meta_amanha == 1 else "s" }}.</p>
   {% elif p.meta_hoje and p.feitas_hoje >= p.meta_hoje %}
   <p style="font-weight:800;color:var(--ok)">Leituras de hoje concluídas! Quer adiantar? Qualquer leitura extra diminui a meta dos próximos dias.</p>
   {% elif p.excluidas and p.meta_hoje %}

@@ -384,6 +384,7 @@ DEFAULTS = {
     "meta_leituras_por_aula": "5",      # cada aula deve ser lida 5x
     "data_limite_leituras": "2027-03-10",  # depois disso: só questões e descanso
     "max_dias_sem_ver": "10",           # nenhuma aula (já iniciada) deve ficar mais que isso sem leitura
+    "novas_por_dia": "2",               # mínimo de aulas novas (1ª leitura) por dia, enquanto houver
     "meta_questoes_dia": "60",          # bateria diária obrigatória (mínimo 60)
 }
 
@@ -933,6 +934,36 @@ def _data_cfg(cfg, chave):
         return date.fromisoformat(DEFAULTS[chave])
 
 
+def carga_do_dia(d, n, ult, adiadas, alvo, max_dias, limite, novas_min):
+    """Meta equilibrada de um dia (a mesma regra no plano de hoje e no calendário).
+
+    - releituras: o mínimo, num ritmo constante, para nenhuma aula iniciada passar de `max_dias`
+      sem leitura (agenda pelo prazo de cada aula: última leitura + max_dias);
+    - aulas novas: pelo menos `novas_min` por dia, enquanto houver;
+    - e nunca menos que o ritmo para terminar tudo até a data limite (o que falta ÷ dias).
+    Retorna (meta, aulas que precisam ser relidas hoje — pelo prazo, novas mínimas)."""
+    restante = sum(max(0, alvo - v) for v in n.values())
+    dias = (limite - d).days + 1
+    if dias <= 0 or not restante:
+        return 0, [], 0
+    base = math.ceil(restante / dias)
+
+    def fora(i):
+        return i in adiadas and d < adiadas[i]
+
+    ativas = sorted((ult[i] + timedelta(days=max_dias), i) for i in n
+                    if 0 < n[i] < alvo and ult.get(i) and not fora(i))
+    novas = min(max(0, novas_min), sum(1 for i in n if n[i] == 0 and not fora(i)))
+    k_max = max(0, min(max_dias, dias - 1))
+    vence = [sum(1 for prazo, _ in ativas if prazo <= d + timedelta(days=k)) for k in range(k_max + 1)]
+    ritmo_rel = max([math.ceil(vence[k] / (k + 1)) for k in range(k_max + 1)] + [0])
+    meta = max(base, ritmo_rel + novas)
+    rel = meta - novas  # vagas de releitura no dia
+    hoje_obrig = max([vence[0]] + [vence[k] - k * rel for k in range(1, k_max + 1)])
+    hoje_obrig = max(0, min(hoje_obrig, rel))
+    return meta, [i for _, i in ativas[:hoje_obrig]], novas
+
+
 def plano_do_dia():
     """Meta diária de leituras (5x por aula até a data limite) e a fila de aulas de hoje.
 
@@ -952,7 +983,7 @@ def plano_do_dia():
         datas = [l.lida_em for l in a.leituras]
         antes = [d for d in datas if d < ini]
         est[a.id] = {"n": len(datas), "n_antes": len(antes), "ultima": max(datas) if datas else None,
-                     "hoje": len(datas) - len(antes)}
+                     "ultima_antes": max(antes) if antes else None, "hoje": len(datas) - len(antes)}
     restante = sum(max(0, alvo - e["n"]) for e in est.values())
     restante_inicio = sum(max(0, alvo - e["n_antes"]) for e in est.values())
     feitas_hoje = restante_inicio - restante  # leituras de hoje que contaram para a meta
@@ -962,6 +993,7 @@ def plano_do_dia():
 
     # ajustes do admin: trocas (aula sai e volta em ~10 dias), exclusões e inclusões (só hoje)
     adiadas, voltas, excluidas, substitutas, incluidas, ajustes_hoje = {}, {}, set(), [], [], []
+    adiada_em = {}  # aula trocada -> dia da troca
     escolhida_em = {}  # aula escolhida pelo admin hoje -> quando (pode ser uma aula já lida hoje: vale a leitura seguinte)
     esc = escopo()
     if esc:
@@ -985,6 +1017,7 @@ def plano_do_dia():
                 escolhida_em[aj.substituta_id] = aj.criado_em
             if aj.volta_em and aj.volta_em > h:
                 adiadas[aj.aula_id] = aj.volta_em
+                adiada_em[aj.aula_id] = aj.data
             elif aj.volta_em:
                 u = est[aj.aula_id]["ultima"]
                 if est[aj.aula_id]["n"] < alvo and (u is None or u.date() < aj.data or est[aj.aula_id]["hoje"]):
@@ -997,6 +1030,15 @@ def plano_do_dia():
                                           AjusteMeta.aula_id.in_(list(voltas))).all():
             voltas_de[aj.aula_id] = aj.data
     incluidas = [i for i in incluidas if i not in excluidas and est[i]["n_antes"] < alvo]
+    novas_min = max(0, int(cfg_num(cfg, "novas_por_dia")))
+    obrig, novas_hoje = [], 0
+    if fase == "leitura" and restante_inicio:
+        # meta equilibrada, calculada com a situação do início do dia (não muda com as leituras de hoje)
+        meta_hoje, obrig, novas_hoje = carga_do_dia(
+            h, {a.id: est[a.id]["n_antes"] for a in aulas},
+            {a.id: (est[a.id]["ultima_antes"].date() if est[a.id]["ultima_antes"] else None) for a in aulas},
+            {k: v for k, v in adiadas.items() if adiada_em.get(k, h) < h},  # trocas de hoje não mudam a meta
+            alvo, max_dias, limite, novas_min)
     if fase == "leitura" and incluidas:
         meta_hoje += len(incluidas)
 
@@ -1070,51 +1112,75 @@ def plano_do_dia():
             marca += timedelta(seconds=1)
             ultima_mat[a.materia_id] = marca
             planejadas.add(a.materia_id)
-        # aulas já selecionadas para hoje (foto do dia): continuam as mesmas, na mesma ordem, mesmo depois
-        # de um ajuste do admin — só a aula trocada/excluída sai e a vaga é preenchida pelo rodízio
-        for aid in (snap_hoje.planejadas if snap_hoje else []):
+        def por(a, motivo, urg):
+            fila.append({"aula": a, "vez": est[a.id]["n"] + 1, "motivo": motivo, "urgente": urg})
+            cands.remove(a)
+            nonlocal_marca[0] += timedelta(seconds=1)
+            ultima_mat[a.materia_id] = nonlocal_marca[0]  # próxima sugestão vai para outra matéria
+            planejadas.add(a.materia_id)
+
+        nonlocal_marca = [marca]
+
+        def motivo_rodizio(a):
+            um = ultima_mat.get(a.materia_id)
+            if a.materia_id in planejadas:
+                return "rodízio entre as matérias"
+            if um is None:
+                return "matéria ainda não estudada"
+            d = (h - um.date()).days
+            return "matéria estudada hoje" if d == 0 else f"matéria parada há {d} dia{'s' if d > 1 else ''}"
+
+        def rodizio(pool):
+            """Matéria vista há mais tempo; nela, a aula menos lida (e lida há mais tempo)."""
+            mid = min({x.materia_id for x in pool}, key=lambda m: ultima_mat.get(m) or datetime.min)
+            return min((x for x in pool if x.materia_id == mid),
+                       key=lambda x: (est[x.id]["n"], est[x.id]["ultima"] or datetime.min, x.ordem or 0, x.id))
+
+        def releitura(a):
+            d = dias_sem(a)
+            return (f"sem leitura há {d} dias" + (" — passou do limite!" if d > max_dias else "")
+                    if d is not None else "releitura"), d is not None and d >= max_dias - 2
+
+        # 1) releituras que vencem: o mínimo para nenhuma aula passar de 10 dias sem leitura
+        for aid in obrig:
             a = por_id.get(aid)
-            if len(fila) >= vagas or a is None or a not in cands:
-                continue
-            motivo, urg = motivo_de(a)
-            fila.append({"aula": a, "vez": est[a.id]["n"] + 1, "motivo": motivo, "urgente": urg})
-            cands.remove(a)
-            marca += timedelta(seconds=1)
-            ultima_mat[a.materia_id] = marca
-            planejadas.add(a.materia_id)
-        while cands:
-            urgentes = [a for a in cands if est[a.id]["n"] > 0 and dias_sem(a) >= max_dias - 2]
+            if a in cands:
+                por(a, *releitura(a))
+        # foto do dia (feita pela regra equilibrada): as aulas escolhidas de manhã continuam as mesmas
+        if snap_hoje and snap_hoje.meta_leituras is not None:
+            for aid in snap_hoje.planejadas:
+                a = por_id.get(aid)
+                if len(fila) < vagas and a in cands:
+                    m, u = motivo_de(a)
+                    por(a, ("aula nova — " + m) if est[a.id]["n"] == 0 else m, u)
+        # 2) remarcadas (planejadas em outro dia e não lidas; trocadas que voltaram)
+        while len(fila) < vagas:
             atrasadas_plano = [a for a in cands if a.id in pendentes]
-            if len(fila) >= vagas and not urgentes:
-                break  # meta cumprida; aulas perto do limite de dias entram mesmo assim
-            if atrasadas_plano and len(fila) < vagas:
-                a = min(atrasadas_plano, key=lambda x: (pendentes[x.id], x.materia.ordem, x.ordem or 0))
-                motivo = (f"trocada em {voltas_de[a.id].strftime('%d/%m')} — voltou à meta" if a.id in voltas_de
-                          else f"planejada para {pendentes[a.id].strftime('%d/%m')} e não lida — remarcada")
-                urg = True
-            elif urgentes:
-                a = max(urgentes, key=lambda x: (dias_sem(x), -est[x.id]["n"]))
-                d = dias_sem(a)
-                motivo = f"sem leitura há {d} dias" + (" — passou do limite!" if d > max_dias else "")
-                urg = True
+            if not atrasadas_plano:
+                break
+            a = min(atrasadas_plano, key=lambda x: (pendentes[x.id], x.materia.ordem, x.ordem or 0))
+            por(a, (f"trocada em {voltas_de[a.id].strftime('%d/%m')} — voltou à meta" if a.id in voltas_de
+                    else f"planejada para {pendentes[a.id].strftime('%d/%m')} e não lida — remarcada"), True)
+        # 3) aulas novas: pelo menos `novas_por_dia` (contando as novas já lidas hoje)
+        novas_feitas = sum(1 for e in est.values() if e["n_antes"] == 0 and e["hoje"])
+        while len(fila) < vagas and novas_feitas + sum(1 for f in fila if f["vez"] == 1) < novas_hoje:
+            pool = [x for x in cands if est[x.id]["n"] == 0]
+            if not pool:
+                break
+            a = rodizio(pool)
+            por(a, "aula nova — " + motivo_rodizio(a), False)
+        # 4) o resto da meta: releituras pelo prazo (quem está há mais tempo sem leitura); depois, novas
+        while len(fila) < vagas and cands:
+            rel = [x for x in cands if est[x.id]["n"] > 0 and dias_sem(x)]
+            if rel:
+                a = max(rel, key=lambda x: (dias_sem(x), -est[x.id]["n"]))
+                por(a, *releitura(a))
             else:
-                mid = min({x.materia_id for x in cands}, key=lambda m: ultima_mat.get(m) or datetime.min)
-                a = min((x for x in cands if x.materia_id == mid),
-                        key=lambda x: (est[x.id]["n"], est[x.id]["ultima"] or datetime.min, x.ordem or 0, x.id))
-                um = ultima_mat.get(mid)
-                if mid in planejadas:
-                    motivo = "rodízio entre as matérias"
-                elif um is None:
-                    motivo = "matéria ainda não estudada"
-                else:
-                    d = (h - um.date()).days
-                    motivo = "matéria estudada hoje" if d == 0 else f"matéria parada há {d} dia{'s' if d > 1 else ''}"
-                urg = False
-            fila.append({"aula": a, "vez": est[a.id]["n"] + 1, "motivo": motivo, "urgente": urg})
-            cands.remove(a)
-            marca += timedelta(seconds=1)
-            ultima_mat[a.materia_id] = marca  # próxima sugestão vai para outra matéria
-            planejadas.add(a.materia_id)
+                a = rodizio(cands)
+                por(a, ("aula nova — " if est[a.id]["n"] == 0 else "") + motivo_rodizio(a), False)
+        # segurança: aula que passaria do limite hoje entra mesmo acima da meta
+        for a in [x for x in cands if est[x.id]["n"] > 0 and dias_sem(x) is not None and dias_sem(x) >= max_dias]:
+            por(a, *releitura(a))
 
     # foto do plano do dia (uma vez por dia)
     if fase == "leitura" and aulas and esc and not snap_hoje:
@@ -1126,6 +1192,14 @@ def plano_do_dia():
             db.session.commit()
         except Exception:  # outro processo gravou ao mesmo tempo
             db.session.rollback()
+    elif fase == "leitura" and snap_hoje and snap_hoje.meta_leituras is None:
+        try:  # foto zerada (mudança de regra): passa a valer o plano atual
+            lidas_hoje = [a.id for a in aulas if est[a.id]["hoje"]]
+            snap_hoje.meta_leituras, snap_hoje.restante_inicio = meta_hoje, restante_inicio
+            snap_hoje.planejadas_json = json.dumps(lidas_hoje + [f["aula"].id for f in fila])
+            db.session.commit()
+        except Exception:  # noqa: BLE001
+            db.session.rollback()
 
     # ritmo recalculado a cada leitura: o que falta (contando o resto da meta de hoje) ÷ dias que sobram depois de hoje
     faltam_hoje = max(0, meta_hoje - feitas_hoje) if fase == "leitura" else 0
@@ -1134,13 +1208,23 @@ def plano_do_dia():
     else:
         ritmo_vivo = float(faltam_hoje)
     total_necessario = alvo * len(aulas)
+    # meta de amanhã pela mesma regra equilibrada, supondo a lista de hoje cumprida
+    meta_amanha = 0
+    if fase == "leitura" and dias > 1:
+        n1 = {a.id: est[a.id]["n"] for a in aulas}
+        u1 = {a.id: (est[a.id]["ultima"].date() if est[a.id]["ultima"] else None) for a in aulas}
+        for f in fila:
+            n1[f["aula"].id] += 1
+            u1[f["aula"].id] = h
+        meta_amanha = carga_do_dia(h + timedelta(days=1), n1, u1, adiadas, alvo, max_dias, limite, novas_min)[0]
     return {"ritmo_vivo": ritmo_vivo, "meta_vivo": math.ceil(ritmo_vivo - 1e-9) if ritmo_vivo else 0,
+            "novas_hoje": novas_hoje, "releituras_hoje": max(0, meta_hoje - novas_hoje), "novas_min": novas_min,
             "faltam_hoje": faltam_hoje,"alvo": alvo, "pendentes": pendentes, "adiadas": adiadas, "excluidas": excluidas,
             "ajustes_hoje": ajustes_hoje, "limite": limite, "dias": max(dias, 0), "fase": fase, "max_dias": max_dias,
             "restante": restante, "meta_hoje": meta_hoje,
             "aulas_faltando": sum(1 for e in est.values() if e["n"] < alvo),
             "ritmo": (restante_inicio / dias) if fase == "leitura" and dias > 0 else 0,
-            "meta_amanha": math.ceil(restante / (dias - 1)) if fase == "leitura" and dias > 1 and restante else 0, "feitas_hoje": feitas_hoje, "fila": fila,
+            "meta_amanha": meta_amanha, "feitas_hoje": feitas_hoje, "fila": fila,
             "atrasadas": atrasadas, "est": est, "total_aulas": len(aulas),
             "total_necessario": total_necessario, "total_feito": total_necessario - restante}
 
@@ -1174,39 +1258,55 @@ def projecao_leituras():
     adiadas = p["adiadas"]
     remarcar = [aid for aid, _ in sorted(p["pendentes"].items(), key=lambda kv: kv[1]) if aid not in fila_ids and aid in n]
     remarcar += [aid for aid, _ in sorted(adiadas.items(), key=lambda kv: kv[1]) if aid in n]
+    novas_min = max(0, int(cfg_num(configs(), "novas_por_dia")))
     d = h + timedelta(days=1)
     while d <= limite:
-        restante = sum(max(0, alvo - n[i]) for i in n)
-        if not restante:
-            break
-        meta = math.ceil(restante / ((limite - d).days + 1))
         cands = [i for i in n if n[i] < alvo and not (i in adiadas and d < adiadas[i])]
-        escolhidas = []
-        while cands:
-            urg = [i for i in cands if n[i] > 0 and ult[i] and (d - ult[i]).days >= max_dias - 2]
-            rem = [i for i in remarcar if i in cands]
-            if len(escolhidas) >= meta and not urg:
+        meta, obrig, novas = carga_do_dia(d, n, ult, adiadas, alvo, max_dias, limite, novas_min)
+        if not meta or not cands:
+            if not sum(max(0, alvo - n[i]) for i in n):
                 break
-            if rem and len(escolhidas) < meta:
-                i = rem[0]
-                remarcar.remove(i)
-                u = True
-            elif urg:
-                i = max(urg, key=lambda x: ((d - ult[x]).days, -n[x]))
-                u = True
-            else:
-                mid = min({por_id[x].materia_id for x in cands},
-                          key=lambda m: ult_mat.get(m) or (date.min, 0))
-                i = min((x for x in cands if por_id[x].materia_id == mid),
-                        key=lambda x: (n[x], ult[x] or date.min, por_id[x].ordem or 0, x))
-                u = False
+            d += timedelta(days=1)
+            continue
+        escolhidas = []
+
+        def pega(i):
+            u = n[i] > 0 and ult[i] is not None and (d - ult[i]).days >= max_dias - 2
             escolhidas.append((por_id[i], n[i] + 1, u))
             proxima.setdefault(i, d)
             n[i] += 1
             ult[i] = d
-            seq += 1
-            ult_mat[por_id[i].materia_id] = (d, seq)
+            nonlocal_seq[0] += 1
+            ult_mat[por_id[i].materia_id] = (d, nonlocal_seq[0])
             cands.remove(i)
+
+        nonlocal_seq = [seq]
+
+        def rodizio(pool):
+            mid = min({por_id[x].materia_id for x in pool}, key=lambda m: ult_mat.get(m) or (date.min, 0))
+            return min((x for x in pool if por_id[x].materia_id == mid),
+                       key=lambda x: (n[x], ult[x] or date.min, por_id[x].ordem or 0, x))
+
+        for i in obrig:  # 1) releituras que vencem
+            if i in cands:
+                pega(i)
+        while len(escolhidas) < meta:  # 2) remarcadas
+            rem = [i for i in remarcar if i in cands]
+            if not rem:
+                break
+            remarcar.remove(rem[0])
+            pega(rem[0])
+        while len(escolhidas) < meta and sum(1 for _, v, _ in escolhidas if v == 1) < novas:  # 3) novas
+            pool = [i for i in cands if n[i] == 0]
+            if not pool:
+                break
+            pega(rodizio(pool))
+        while len(escolhidas) < meta and cands:  # 4) resto: releituras pelo prazo, depois novas
+            rel = [i for i in cands if n[i] > 0 and ult[i] and ult[i] < d]
+            pega(max(rel, key=lambda x: ((d - ult[x]).days, -n[x])) if rel else rodizio(cands))
+        for i in [x for x in cands if n[x] > 0 and ult[x] and (d - ult[x]).days >= max_dias]:
+            pega(i)  # segurança: não passa do limite
+        seq = nonlocal_seq[0]
         if escolhidas:
             dias[d] = escolhidas
         d += timedelta(days=1)
@@ -3249,8 +3349,25 @@ def muito_grande(_):
     return redirect(request.referrer or url_for("index"))
 
 
+def zerar_fotos_de_hoje_v2():
+    """Uma vez: a meta do dia mudou de regra (equilibrada). As fotos de hoje, feitas pela regra antiga,
+    são zeradas (a lista de aulas é refeita na próxima abertura); a bateria de hoje é mantida."""
+    if db.session.get(Config, "meta_equilibrada_v1"):
+        return
+    for snap in MetaDia.query.filter(MetaDia.data == hoje()).all():
+        snap.meta_leituras = None
+        snap.planejadas_json = "[]"
+    db.session.add(Config(chave="meta_equilibrada_v1", valor=hoje().isoformat()))
+    db.session.commit()
+
+
 def _reparos_iniciais():
     """Reparos que dependem de funções definidas depois de init_db (roda uma vez, no carregamento)."""
+    try:
+        with app.app_context():
+            zerar_fotos_de_hoje_v2()
+    except Exception as e:  # noqa: BLE001
+        app.logger.warning("fotos v2: %s", e)
     try:
         with app.app_context():
             reparar_cadernos_tec()
