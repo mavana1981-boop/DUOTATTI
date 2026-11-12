@@ -333,7 +333,7 @@ def extrair_tec(paginas, numeros):
             enun, alts = _alts_tec(corpo)
             if enun is None:
                 enun, alts = corpo, {}
-        enun = normalizar(enun)
+        enun = re.sub(r"^\s*\d{1,3}\)\s+", "", normalizar(enun))  # "1) Corresponde..." (OCR) -> "Corresponde..."
         res[n] = {"fonte": fonte[:300], "enunciado": enun, "alternativas": alts, "apoio": "",
                   "ok": completa(alts, enun)}
     return res

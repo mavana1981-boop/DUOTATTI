@@ -26,6 +26,7 @@ from werkzeug.utils import secure_filename
 from edital import EDITAL, TODO, chave_legada
 import questoes as QZ
 import ia as IA
+import ocr as OCR
 import queue
 import threading
 
@@ -131,6 +132,7 @@ class Caderno(db.Model):
     arquivo_nome = db.Column(db.String(200))
     pdf_questoes = deferred(db.Column(db.LargeBinary))
     pdf_gabarito = deferred(db.Column(db.LargeBinary))
+    texto_ocr = deferred(db.Column(db.Text))  # páginas lidas por OCR (PDF com texto embaralhado), em JSON
     tem_pdf_gabarito = db.Column(db.Boolean, default=False)
     assunto = db.Column(db.String(200))  # assunto das questões (ex.: Crase)
     topico_id = db.Column(db.Integer, db.ForeignKey("topico.id"))
@@ -461,7 +463,7 @@ def seed():
     db.session.commit()
 
 
-NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)"), ("aula", "ordem", "INTEGER"), ("tentativa", "finalizada", "BOOLEAN DEFAULT TRUE"), ("caderno", "ia_status", "VARCHAR(20)"), ("caderno", "ia_msg", "VARCHAR(300)"), ("caderno", "ia_inicio", "TIMESTAMP"), ("log_acesso", "detalhe", "VARCHAR(300)"), ("leitura", "usuario", "VARCHAR(60)"), ("tentativa", "usuario", "VARCHAR(60)"), ("caderno", "ia_batida", "TIMESTAMP"), ("caderno", "ia_provedor", "VARCHAR(20)"), ("caderno", "ia_claude_ok", "BOOLEAN DEFAULT FALSE"), ("caderno", "ia_parcial", "TEXT"), ("caderno", "ia_tokens", "INTEGER DEFAULT 0"), ("caderno", "pdf_hash", "VARCHAR(64)"), ("caderno", "ia_escopo", "VARCHAR(10)")]
+NOVAS_COLUNAS = [("caderno", "assunto", "VARCHAR(200)"), ("topico", "personalizado", "BOOLEAN DEFAULT FALSE"), ("caderno", "topico_id", "INTEGER"), ("topico", "grupo", "VARCHAR(200)"), ("aula", "ordem", "INTEGER"), ("tentativa", "finalizada", "BOOLEAN DEFAULT TRUE"), ("caderno", "ia_status", "VARCHAR(20)"), ("caderno", "ia_msg", "VARCHAR(300)"), ("caderno", "ia_inicio", "TIMESTAMP"), ("log_acesso", "detalhe", "VARCHAR(300)"), ("leitura", "usuario", "VARCHAR(60)"), ("tentativa", "usuario", "VARCHAR(60)"), ("caderno", "ia_batida", "TIMESTAMP"), ("caderno", "ia_provedor", "VARCHAR(20)"), ("caderno", "ia_claude_ok", "BOOLEAN DEFAULT FALSE"), ("caderno", "ia_parcial", "TEXT"), ("caderno", "ia_tokens", "INTEGER DEFAULT 0"), ("caderno", "pdf_hash", "VARCHAR(64)"), ("caderno", "ia_escopo", "VARCHAR(10)"), ("caderno", "texto_ocr", "TEXT")]
 
 
 def migrar(conn):
@@ -849,6 +851,31 @@ def parse_gabarito_texto(txt, exigir_secao=False, manual=False):
         if len(g) >= 3:
             return g
     return {}
+
+
+def gabarito_por_ocr(data, exigir_secao=True):
+    """Leitor simples para PDFs com texto embaralhado (fonte sem mapeamento): lê por OCR só as
+    últimas páginas, onde fica o gabarito. Grátis; devolve {} se o OCR não estiver instalado."""
+    if not data or not OCR.disponivel():
+        return {}
+    try:
+        pg = OCR.texto_paginas_pypdf(data)
+        if not pg or not OCR.pdf_ilegivel(data, pg):
+            return {}
+        n = len(pg)
+        for ultimas in ((n,) if n <= 4 else (2, 5)):
+            idxs = list(range(max(0, n - ultimas), n))
+            g = OCR.gabarito_ocr("\n".join(OCR.paginas_ocr(data, idxs)), exigir_secao=exigir_secao)
+            if len(g) >= 3:
+                return _limpar(g)
+    except Exception as e:  # noqa: BLE001
+        registrar_erro(e)
+    return {}
+
+
+def ler_gabarito_pdf(data, exigir_secao=False):
+    """Gabarito do PDF: texto (pypdf) primeiro; se o texto vier embaralhado, OCR."""
+    return parse_gabarito_texto(extrair_texto(data), exigir_secao=exigir_secao) or gabarito_por_ocr(data, exigir_secao)
 
 
 # --------------------------------------------------------------------------- #
@@ -2392,13 +2419,89 @@ def sem_nulos(t):
     return RX_CONTROLE.sub("", str(t or ""))
 
 
-def ler_questoes_sem_ia(c):
-    """Leitor gratuito (por regras) sobre o texto do PDF: {n: questão} para todos os números do gabarito."""
-    gab = c.gabarito or {}
+# ---- OCR gratuito (PDF com texto embaralhado) ----------------------------- #
+_ocr_rodando = set()
+_ocr_trava = threading.Lock()
+
+
+def _ocr_salvo(c):
+    try:
+        pg = json.loads(c.texto_ocr or "null")
+        return pg if isinstance(pg, list) and pg else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def ocr_lendo(c):
+    return c.id in _ocr_rodando
+
+
+def iniciar_ocr(cid):
+    """Lê o PDF do caderno por OCR em segundo plano (~1-2 s por página) e remonta as questões."""
+    if not OCR.disponivel():
+        return False
+    with _ocr_trava:
+        if cid in _ocr_rodando:
+            return True
+        _ocr_rodando.add(cid)
+    threading.Thread(target=_ocr_bg, args=(cid,), daemon=True).start()
+    return True
+
+
+def _ocr_bg(cid):
+    with app.app_context():
+        try:
+            c = db.session.get(Caderno, cid)
+            if c and c.pdf_questoes and not _ocr_salvo(c):
+                pg = OCR.paginas_ocr(c.pdf_questoes)
+                c = db.session.get(Caderno, cid)
+                c.texto_ocr = json.dumps([sem_nulos(p) for p in pg], ensure_ascii=False)
+                db.session.commit()
+            with _ocr_trava:
+                _ocr_rodando.discard(cid)
+            c = db.session.get(Caderno, cid)
+            if c and c.gabarito and not ia_ocupada(c):
+                montar_questoes(c, extra=_carregar_parcial(c) or None)
+        except Exception as e:  # noqa: BLE001
+            db.session.rollback()
+            registrar_erro(e)
+        finally:
+            with _ocr_trava:
+                _ocr_rodando.discard(cid)
+            db.session.remove()
+
+
+def paginas_do_caderno(c, esperar_ocr=False):
+    """Texto das páginas do PDF de questões. Se o texto vier embaralhado, usa o OCR (salvo no caderno).
+    Retorna (paginas, pendente): pendente=True quando o OCR ainda está rodando em segundo plano."""
     try:
         paginas = [p.extract_text() or "" for p in PdfReader(io.BytesIO(c.pdf_questoes)).pages]
     except Exception:
         paginas = []
+    if not paginas or not OCR.ilegivel("\n".join(paginas[:6])):
+        return paginas, False
+    salvo = _ocr_salvo(c)
+    if salvo:
+        return salvo, False
+    if not iniciar_ocr(c.id):
+        return paginas, False  # sem OCR no servidor: segue como antes (IA ou gabarito só com letras)
+    if esperar_ocr:  # na leitura com IA (segundo plano): espera o OCR para a IA só ler o que faltar
+        limite = _time.time() + 600
+        while c.id in _ocr_rodando and _time.time() < limite:
+            _time.sleep(2)
+        db.session.expire(c)
+        salvo = _ocr_salvo(c)
+        if salvo:
+            return salvo, False
+    return [], True
+
+
+def ler_questoes_sem_ia(c, esperar_ocr=False):
+    """Leitor gratuito (por regras) sobre o texto do PDF: {n: questão} para todos os números do gabarito."""
+    gab = c.gabarito or {}
+    paginas, pendente = paginas_do_caderno(c, esperar_ocr)
+    if pendente:  # OCR em andamento: por enquanto, só as letras
+        return {n: {"fonte": "", "enunciado": "", "alternativas": {}, "apoio": "", "ok": False} for n in gab}
     if QZ.eh_tec("\n".join(paginas)):  # caderno do TEC Concursos: formato próprio
         try:
             res = QZ.extrair_tec(paginas, list(gab))
@@ -2575,7 +2678,7 @@ def _processar_ia(cid):
             somente = None
             if escopo != "tudo" and not IA.modo_completo():
                 # economia: a IA só lê o que o leitor gratuito (e as leituras anteriores) não montaram
-                base = ler_questoes_sem_ia(c)
+                base = ler_questoes_sem_ia(c, esperar_ocr=True)
                 for n, q in parcial.items():
                     if q.get("ok"):
                         base[n] = q
@@ -2809,9 +2912,9 @@ def caderno_novo(mid):
     if texto.strip():
         gab = parse_gabarito_texto(texto, manual=True)
     if not gab and dg:
-        gab = parse_gabarito_texto(extrair_texto(dg))
+        gab = ler_gabarito_pdf(dg)
     if not gab:
-        gab = parse_gabarito_texto(extrair_texto(dq), exigir_secao=True)
+        gab = ler_gabarito_pdf(dq, exigir_secao=True)
 
     titulo = sem_nulos(request.form.get("titulo", "").strip() or os.path.splitext(nome)[0])
     c = Caderno(materia_id=m.id, titulo=titulo[:200], arquivo_nome=nome[:200], pdf_questoes=dq,
@@ -2828,9 +2931,14 @@ def caderno_novo(mid):
         flash("Caderno criado, mas não consegui ler o gabarito. Digite-o abaixo.", "erro")
         return redirect(url_for("caderno_gabarito", cid=c.id))
     ok = montar_questoes(c)
+    lendo_ocr = ocr_lendo(c)
     iniciou, msg = iniciar_ia_com_opcoes(c, request.form) if IA.disponivel() else (False, "")
+    aviso_ocr = (f" Gabarito lido ({len(gab)} questões). O texto deste PDF vem embaralhado: estou lendo as "
+                 "questões por OCR (grátis, cerca de 1 a 2 minutos) — atualize a página daqui a pouco.") if lendo_ocr else ""
     if iniciou:
-        flash(f"Caderno criado. {msg}", "ok")
+        flash(f"Caderno criado.{aviso_ocr} {msg}", "ok")
+    elif lendo_ocr:
+        flash(f"Caderno criado.{aviso_ocr}", "ok")
     else:
         flash(f"Caderno criado: {ok} de {len(gab)} questões reconstruídas. Bons estudos!", "ok" if ok else "erro")
     return redirect(url_for("materia", mid=mid) + "#questoes")
@@ -2887,9 +2995,9 @@ def caderno_resolver(cid):
     if not c.gabarito:
         if not ia_ocupada(c):
             # 1º: leitor simples ampliado; 2º: IA
-            gab = parse_gabarito_texto(extrair_texto(c.pdf_questoes), exigir_secao=True) if c.pdf_questoes else {}
+            gab = ler_gabarito_pdf(c.pdf_questoes, exigir_secao=True) if c.pdf_questoes else {}
             if not gab and c.pdf_gabarito:
-                gab = parse_gabarito_texto(extrair_texto(c.pdf_gabarito))
+                gab = ler_gabarito_pdf(c.pdf_gabarito)
             if gab:
                 c.gabarito = gab
                 db.session.commit()

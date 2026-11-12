@@ -1,0 +1,4 @@
+# Tesseract (OCR gratuito) para ler PDFs cujo texto vem embaralhado (ex.: cadernos do TEC
+# "impressos" em PDF). Sem ele o app funciona igual, só não usa o OCR.
+[phases.setup]
+aptPkgs = ["...", "tesseract-ocr", "tesseract-ocr-por"]
