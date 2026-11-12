@@ -2496,6 +2496,31 @@ def paginas_do_caderno(c, esperar_ocr=False):
     return [], True
 
 
+_ilegiveis = {}  # caderno -> o texto do PDF vem embaralhado? (evita reabrir o PDF a cada visita)
+
+
+def aviso_ocr(c):
+    """Caderno sem nenhuma questão montada (ex.: enviado antes do OCR existir): se o texto do PDF vier
+    embaralhado, começa o OCR em segundo plano e avisa. Se o servidor não tiver OCR, diz isso."""
+    if not c.pdf_questoes or ia_ocupada(c) or c.texto_ocr is not None and _ocr_salvo(c):
+        return
+    if Questao.query.filter_by(caderno_id=c.id, ok=True).first():
+        return
+    if ocr_lendo(c):
+        flash("Estou lendo as questões deste PDF por OCR (grátis). Leva cerca de 1 a 3 minutos — atualize a página daqui a pouco.", "ok")
+        return
+    if c.id not in _ilegiveis:
+        _ilegiveis[c.id] = OCR.pdf_ilegivel(c.pdf_questoes)
+    if not _ilegiveis[c.id]:
+        return
+    if iniciar_ocr(c.id):
+        flash("O texto deste PDF vem embaralhado. Comecei a ler as questões por OCR (grátis) — leva cerca de 1 a 3 minutos; "
+              "atualize a página daqui a pouco.", "ok")
+    else:
+        flash("O texto deste PDF vem embaralhado e o OCR (Tesseract) não está instalado no servidor. "
+              "Use a leitura com IA para montar as questões.", "erro")
+
+
 def ler_questoes_sem_ia(c, esperar_ocr=False):
     """Leitor gratuito (por regras) sobre o texto do PDF: {n: questão} para todos os números do gabarito."""
     gab = c.gabarito or {}
@@ -3009,6 +3034,7 @@ def caderno_resolver(cid):
                                    ia_on=True, ia_lendo=True, finalizadas=[])
         flash(c.ia_msg if c.ia_status == "erro" else "Este caderno ainda não tem gabarito.", "erro")
         return redirect(url_for("caderno_gabarito", cid=cid))
+    aviso_ocr(c)
     if Questao.query.filter_by(caderno_id=c.id).count() < len(c.gabarito) and not ia_ocupada(c):
         montar_questoes(c)
     qs = Questao.query.filter_by(caderno_id=c.id).order_by(Questao.numero).all()
