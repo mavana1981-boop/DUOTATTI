@@ -1364,7 +1364,8 @@ def dados_calendario():
 
 
 def _escolha_admin():
-    """Bateria escolhida pelo admin para hoje (por aluno): {"data", "caderno_id"}; vale só no dia."""
+    """Bateria escolhida para hoje (por aluno, pelo próprio aluno ou pelo admin): {"data", "caderno_id", "por"};
+    vale só no dia."""
     try:
         d = json.loads(configs().get("bateria_escolha") or "null")
     except ValueError:
@@ -1541,8 +1542,10 @@ def bateria_do_dia(plano=None):
     elif modo == "estudada_nova":
         item = estudada_nova()
         base["modo_admin"] = modo
+    quem = "por você" if esc and esc.get("por") == "aluno" else "pelo admin"
+    base["escolhida_por"] = quem
     if item is not None:
-        item["motivo"] = "escolhida pelo admin — " + item["motivo"]
+        item["motivo"] = f"escolhida {quem} — " + item["motivo"]
         base["escolha_admin"] = True
         base["modo_ok"] = True  # o critério achou um caderno
     cad = db.session.get(Caderno, esc.get("caderno_id")) if esc and esc.get("caderno_id") and not modo else None
@@ -1555,7 +1558,7 @@ def bateria_do_dia(plano=None):
             item = {"materia": cad.materia, "grupo": cad.topico.rotulo if cad.topico else cad.titulo,
                     "chave": (cad.materia_id, gr), "ordem": (cad.materia.ordem, 0), "lido": True,
                     "ultimo": None, "cadernos": [cad], "aula": None}
-        item["motivo"] = "escolhida pelo admin para hoje"
+        item["motivo"] = f"escolhida {quem} para hoje"
         base["escolha_admin"] = True
     if item is None:
         hoje_item = next(((t.materia_id, t.caderno.topico.grupo) for t in tents if t.feita_em >= ini and t.caderno
@@ -2225,8 +2228,8 @@ def index():
             ajuste = {"opcoes": opcoes, "por_id": por_id,
                       "hoje": [aj for aj in p["ajustes_hoje"]],
                       "adiadas": sorted(((por_id[i], d) for i, d in p["adiadas"].items() if i in por_id), key=lambda x: x[1])}
-    cadernos_admin = (Caderno.query.join(Materia).order_by(Materia.ordem, Caderno.titulo).all()
-                      if eh_admin() else [])
+    # cadernos disponíveis para "Trocar bateria" (aluno e admin): todos os que têm questões
+    cadernos_admin = [c for c in Caderno.query.join(Materia).order_by(Materia.ordem, Caderno.titulo).all() if c.total]
     return render_template("index.html", trilha=trilha, h=hm, xp=xp, nv=nivel(xp), ajuste=ajuste,
                            cadernos_admin=cadernos_admin,
                            hoje_str=f"{dias_sem[h0.weekday()]}, {h0.strftime('%d/%m')}",
@@ -3427,16 +3430,19 @@ def _aviso_bateria(msg, cat="ok"):
 
 
 @app.post("/bateria/escolher")
-@so_admin
 def bateria_escolher():
-    """Admin troca o caderno da bateria de hoje do aluno que está vendo (ou volta ao automático)."""
+    """Troca o caderno da bateria de hoje (ou volta ao automático). O aluno troca a própria bateria
+    entre quaisquer cadernos com questões; o admin troca a do aluno que está vendo."""
     v = request.form.get("escolha", "")
+    por = "admin" if eh_admin() else "aluno"
+    aluno = Usuario.query.filter_by(login=escopo()).first()
+    de_quem = "Sua bateria de hoje" if por == "aluno" else \
+        f"Bateria de hoje de {(aluno.nome if aluno else None) or escopo()}"
     if v == "criterio":
         so = request.form.get("so_estudadas") == "1"
         pr = request.form.get("prioridade") if request.form.get("prioridade") in ("nunca_feito", "menor_acerto") else "nunca_feito"
         b = bateria_do_dia()
         alvo = (b.get("previa_criterio") or {}).get(f"{int(so)}:{pr}")
-        aluno = Usuario.query.filter_by(login=escopo()).first()
         if not alvo:
             _aviso_bateria("Nenhum outro caderno " + ("já resolvido" if pr == "menor_acerto" else "nunca feito")
                            + (" de assunto já estudado" if so else "")
@@ -3446,22 +3452,22 @@ def bateria_escolher():
             salvar_cfg("bateria_escolha", json.dumps({
                 "data": hoje().isoformat(), "modo": "criterio", "caderno_id": alvo["id"],
                 "motivo": ("assunto já estudado · " if so else "") + alvo["motivo"],
-                "trocados": b.get("trocados") or []}))
-            _aviso_bateria(f"Bateria de hoje de {(aluno.nome if aluno else None) or escopo()} trocada para "
+                "trocados": b.get("trocados") or [], "por": por}))
+            _aviso_bateria(f"{de_quem} trocada para "
                            f"“{alvo['titulo']}” ({alvo['materia']}) — {alvo['motivo']}.", "ok")
         db.session.commit()
         return redirect(url_for("index") + "#bateria")
     modos = {"menor_acerto": "o caderno com menor acerto", "estudada_nova": "uma questão já estudada e nunca feita"}
-    aluno = Usuario.query.filter_by(login=escopo()).first()
     if v in modos:
-        salvar_cfg("bateria_escolha", json.dumps({"data": hoje().isoformat(), "modo": v}))
+        salvar_cfg("bateria_escolha", json.dumps({"data": hoje().isoformat(), "modo": v, "por": por}))
         db.session.commit()
         b = bateria_do_dia()
         if b.get("modo_ok") and b.get("modo_admin") == v and b.get("item") and b["item"]["cadernos"]:
             salvar_cfg("bateria_escolha", json.dumps({"data": hoje().isoformat(), "modo": v,
                                                       "caderno_id": b["item"]["cadernos"][0].id,
-                                                      "motivo": b["item"]["motivo"].replace("escolhida pelo admin — ", "")}))
-            _aviso_bateria(f"Bateria de hoje de {(aluno.nome if aluno else None) or escopo()}: {modos[v]} — "
+                                                      "motivo": b["item"]["motivo"].split(" — ", 1)[-1],
+                                                      "por": por}))
+            _aviso_bateria(f"{de_quem}: {modos[v]} — "
                   f"{b['item']['cadernos'][0].titulo if b['item']['cadernos'] else b['item']['grupo']}.", "ok")
         else:
             salvar_cfg("bateria_escolha", "")
@@ -3470,11 +3476,15 @@ def bateria_escolher():
                   + " A bateria continua automática.", "erro")
         db.session.commit()
         return redirect(url_for("index") + "#bateria")
-    if v.isdigit() and db.session.get(Caderno, int(v)):
+    c = db.session.get(Caderno, int(v)) if v.isdigit() else None
+    if c and c.total:
         trocados = bateria_do_dia().get("trocados") or []
-        salvar_cfg("bateria_escolha", json.dumps({"data": hoje().isoformat(), "caderno_id": int(v), "trocados": trocados}))
-        c = db.session.get(Caderno, int(v))
-        _aviso_bateria(f"Bateria de hoje de {(aluno.nome if aluno else None) or escopo()} trocada para “{c.titulo}”.", "ok")
+        salvar_cfg("bateria_escolha", json.dumps({"data": hoje().isoformat(), "caderno_id": c.id,
+                                                  "trocados": trocados, "por": por}))
+        _aviso_bateria(f"{de_quem} trocada para “{c.titulo}”.", "ok")
+    elif v.isdigit():
+        _aviso_bateria("Esse caderno não existe ou ainda não tem questões. A bateria não foi trocada.", "erro")
+        return redirect(url_for("index") + "#bateria")
     else:
         salvar_cfg("bateria_escolha", "")
         _aviso_bateria("Bateria de hoje voltou a ser escolhida automaticamente.", "info")
